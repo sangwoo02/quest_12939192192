@@ -1,0 +1,699 @@
+/**
+ * 📋 온보딩 페이지 컴포넌트
+ * 
+ * 회원가입 후 신체 정보를 입력받는 페이지입니다.
+ * Samsung Health 연동 또는 직접 입력 방식을 선택할 수 있습니다.
+ * 
+ * 📝 수정 가이드:
+ * - 입력 방식 추가: InputMethod 타입과 method 상태에 새 방식 추가
+ * - Samsung Health 연동: handleSamsungHealthSync 함수에서 실제 API 연결
+ * - 직접 입력 폼: handleManualSubmit 함수와 폼 UI 수정
+ * - 목표 옵션 변경: goal 선택 버튼 배열 수정
+ * 
+ * 🔄 화면 흐름:
+ * 1. select: 입력 방식 선택 (Samsung Health / 직접 입력)
+ * 2. samsung_health: 성별, 목표 입력
+ * 3. samsung_health_sync: 동기화 진행/완료/에러
+ * 4. manual: 키, 몸무게, 성별, 목표 직접 입력
+ * 
+ * ⚠️ 주의사항:
+ * - Samsung Health 연동 시에만 AI 미션 생성 가능
+ * - 직접 입력은 기본 분석만 제공
+ */
+
+import { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
+import { 
+  Keyboard, 
+  ArrowRight, 
+  RefreshCw, 
+  AlertCircle,
+  CheckCircle,
+  X,
+  Heart
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { useAppStore } from '@/stores/appStore';
+import { toast } from 'sonner';
+import type { InBodyData, ManualInputData } from '@/types';
+
+type InputMethod = 'select' | 'samsung_health' | 'samsung_health_sync' | 'manual';
+
+// 생년월일로부터 나이 계산
+const calculateAge = (birthDate: string): number => {
+  const today = new Date();
+  const birth = new Date(birthDate);
+  let age = today.getFullYear() - birth.getFullYear();
+  const monthDiff = today.getMonth() - birth.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+    age--;
+  }
+  return age;
+};
+
+const OnboardingPage = () => {
+  const navigate = useNavigate();
+  const { setInBodyData, setManualData, setOnboardingComplete, user, resetUserData, } = useAppStore();
+  
+  const [method, setMethod] = useState<InputMethod>('select');
+  const [isLoading, setIsLoading] = useState(false);
+  const [syncError, setSyncError] = useState(false);
+  const [syncSuccess, setSyncSuccess] = useState(false);
+  const [syncComplete, setSyncComplete] = useState(false);
+  
+  // Samsung Health 입력 states
+  const [shGender, setShGender] = useState<'male' | 'female'>('male');
+  const [shGoal, setShGoal] = useState('건강 유지');
+  
+  // Manual input states
+  const [height, setHeight] = useState('');
+  const [weight, setWeight] = useState('');
+  const [gender, setGender] = useState<'male' | 'female'>('male');
+  const [bodyFat, setBodyFat] = useState('');
+  const [muscleMass, setMuscleMass] = useState('');
+  const [goal, setGoal] = useState('건강 유지');
+
+  const handleSamsungHealthNext = () => {
+    setMethod('samsung_health_sync');
+  };
+
+  const handleSamsungHealthSync = async () => {
+    setIsLoading(true);
+    setSyncError(false);
+    setSyncSuccess(false);
+    setSyncComplete(false);
+
+    try {
+      const token = localStorage.getItem("access_token");
+      if (!token) throw new Error("로그인이 필요합니다. 다시 로그인 해주세요.");
+
+      const data = await rnRequest("HC_SYNC_AND_SAVE_REQUEST", {
+        token,
+        gender: shGender,
+        goal: shGoal,
+      });
+
+      // data = { hc: {...}, saved: {inbody_id, activity_id} }
+      setSyncSuccess(true);
+
+      setTimeout(async () => {
+        setSyncComplete(true);
+
+        const age = user?.birthDate ? calculateAge(user.birthDate) : 25;
+
+        const heightMeters = data?.hc?.height?.meters ?? null;
+        const weightKg = data?.hc?.weight?.kg ?? null;
+
+        const heightCm = typeof heightMeters === "number" ? heightMeters * 100 : 175;
+        const weight = typeof weightKg === "number" ? weightKg : 70.5;
+
+        const heightM = heightCm / 100;
+        const bmi = heightM > 0 ? +(weight / (heightM * heightM)).toFixed(1) : 23.0;
+
+        const bmr =
+          shGender === "male"
+            ? Math.round(10 * weight + 6.25 * heightCm - 5 * age + 5)
+            : Math.round(10 * weight + 6.25 * heightCm - 5 * age - 161);
+
+        const inBodyData: InBodyData = {
+          id: String(data?.saved?.inbody_id ?? "0"),
+          userId: user?.id || "0",
+          syncedAt: new Date(),
+          name: user?.nickname || "사용자",
+          age,
+          gender: shGender,
+          height: +heightCm.toFixed(1),
+          weight: +weight.toFixed(1),
+          body_fat: 18.5,
+          muscle_mass: 0,
+          goal: shGoal,
+          bmi,
+          bmr,
+        };
+
+        setInBodyData(inBodyData);
+        toast.success("Health Connect 데이터 동기화 및 저장 완료!");
+
+        setTimeout(() => {
+          setOnboardingComplete(true);
+          navigate("/main");
+        }, 1200);
+      }, 800);
+    } catch (e: any) {
+      setIsLoading(false);
+      setSyncError(true);
+      toast.error(e?.message ? String(e.message) : "연동/저장 실패");
+    }
+  };
+
+  
+  const handleManualSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!height || !weight) {
+      toast.error('키와 몸무게를 입력해주세요.');
+      return;
+    }
+
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+      toast.error("로그인이 필요합니다. 다시 로그인 해주세요.");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      await rnRequest("INBODY_MANUAL_SAVE_REQUEST", {
+        token,
+        height: parseFloat(height),
+        weight: parseFloat(weight),
+        gender,
+        goal,
+      });
+
+      const age = user?.birthDate ? calculateAge(user.birthDate) : 25;
+
+      const manualData: ManualInputData = {
+        name: user?.nickname || '사용자',
+        height: parseFloat(height),
+        weight: parseFloat(weight),
+        age,
+        gender,
+        body_fat: bodyFat ? parseFloat(bodyFat) : (gender === 'male' ? 20 : 25),
+        muscle_mass: muscleMass ? parseFloat(muscleMass) : (gender === 'male' ? 30 : 22),
+        goal,
+      };
+
+      setManualData(manualData);
+      setOnboardingComplete(true);
+      toast.success('신체 정보가 저장되었습니다!');
+      navigate('/main');
+    } catch (e: any) {
+      toast.error(e?.message ? String(e.message) : '직접 입력 저장 실패');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  const handleSkip = () => {
+    resetUserData();
+    setOnboardingComplete(true);
+    navigate('/main');
+  };
+
+    // ✅ RN(WebView) 브릿지 요청 헬퍼 (AuthPage와 동일)
+  const pendingRef = useRef(new Map<string, (msg: any) => void>());
+
+  const rnRequest = (type: string, payload: any) => {
+    const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+    return new Promise<any>((resolve, reject) => {
+      pendingRef.current.set(requestId, (msg) => {
+        if (msg.ok) resolve(msg.data);
+        else reject(new Error(msg.error || "Unknown error"));
+      });
+
+      if ((window as any).ReactNativeWebView?.postMessage) {
+        (window as any).ReactNativeWebView.postMessage(
+          JSON.stringify({ type, requestId, payload })
+        );
+        return;
+      }
+
+      reject(new Error("ReactNativeWebView 연결이 없습니다. (앱(WebView)에서 실행해야 합니다)"));
+    });
+  };
+
+  useEffect(() => {
+    const handler = (event: any) => {
+      try {
+        const raw = event?.data;
+        const msg = typeof raw === "string" ? JSON.parse(raw) : raw;
+        const requestId = msg?.requestId;
+        if (!requestId) return;
+
+        const resolver = pendingRef.current.get(requestId);
+        if (!resolver) return;
+
+        pendingRef.current.delete(requestId);
+        resolver(msg);
+      } catch {
+        // ignore
+      }
+    };
+
+    window.addEventListener("message", handler as any);
+    document.addEventListener("message", handler as any);
+
+    return () => {
+      window.removeEventListener("message", handler as any);
+      document.removeEventListener("message", handler as any);
+    };
+  }, []);
+
+
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col">
+      {/* Header */}
+      <div className="gradient-primary px-6 pt-safe-top pb-8">
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-primary-foreground"
+        >
+          <h1 className="text-2xl font-bold">신체 정보 입력</h1>
+          <p className="text-primary-foreground/80 mt-2">
+            맞춤형 건강 미션을 위해 정보를 입력해주세요
+          </p>
+        </motion.div>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 px-6 py-8">
+        <AnimatePresence mode="wait">
+          {method === 'select' && (
+            <motion.div
+              key="select"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-4"
+            >
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => setMethod('samsung_health')}
+                className="w-full bg-card rounded-2xl p-6 card-shadow flex items-center gap-4 text-left"
+              >
+                <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-red-500 to-orange-500 flex items-center justify-center flex-shrink-0 shadow-sm">
+                  <Heart className="w-7 h-7 text-white" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-semibold text-lg text-foreground">Samsung Health 앱 연동</h3>
+                  <p className="text-muted-foreground text-sm mt-1">
+                    Samsung Health 앱 연동으로 신체 정보 분석 비교 및 활동 히스토리와 AI 미션 챌린지를 한 번에 생성할 수 있습니다.
+                  </p>
+                </div>
+                <ArrowRight className="w-5 h-5 text-muted-foreground" />
+              </motion.button>
+
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => setMethod('manual')}
+                className="w-full bg-card rounded-2xl p-6 card-shadow flex items-center gap-4 text-left"
+              >
+                <div className="w-14 h-14 rounded-xl bg-secondary flex items-center justify-center flex-shrink-0">
+                  <Keyboard className="w-7 h-7 text-secondary-foreground" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-semibold text-lg text-foreground">직접 입력</h3>
+                  <p className="text-muted-foreground text-sm mt-1">
+                    키, 몸무게 등 기본 정보를 직접 입력합니다. AI 미션 챌린지를 생성할 수 없습니다.
+                  </p>
+                </div>
+                <ArrowRight className="w-5 h-5 text-muted-foreground" />
+              </motion.button>
+
+              <div className="pt-4">
+                <button
+                  onClick={handleSkip}
+                  className="w-full py-4 text-muted-foreground hover:text-foreground transition-colors text-sm"
+                >
+                  나중에 입력할게요 →
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {method === 'samsung_health' && (
+            <motion.div
+              key="samsung_health"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+            >
+              <div className="space-y-5">
+                <div className="bg-card rounded-2xl p-6 card-shadow text-center mb-6">
+                  <div className="w-20 h-20 mx-auto rounded-2xl bg-gradient-to-br from-red-500 to-orange-500 flex items-center justify-center mb-4 shadow-md">
+                    <Heart className="w-10 h-10 text-white" />
+                  </div>
+                  <h3 className="text-xl font-bold text-foreground">Samsung Health 연동</h3>
+                  <p className="text-muted-foreground mt-2 text-sm">
+                    연동을 위해 기본 정보를 입력해주세요
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-sm text-muted-foreground">성별</Label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setShGender('male')}
+                      className={`h-14 rounded-xl font-semibold transition-all ${
+                        shGender === 'male'
+                          ? 'gradient-primary text-primary-foreground'
+                          : 'bg-secondary text-secondary-foreground'
+                      }`}
+                    >
+                      남성
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShGender('female')}
+                      className={`h-14 rounded-xl font-semibold transition-all ${
+                        shGender === 'female'
+                          ? 'gradient-primary text-primary-foreground'
+                          : 'bg-secondary text-secondary-foreground'
+                      }`}
+                    >
+                      여성
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-sm text-muted-foreground">목표</Label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { value: '건강 유지', label: '건강 유지' },
+                      { value: '체중 감량', label: '체중 감량' },
+                      { value: '근육 증가', label: '근육 증가' },
+                    ].map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setShGoal(option.value)}
+                        className={`h-12 rounded-xl text-sm font-medium transition-all ${
+                          shGoal === option.value
+                            ? 'gradient-primary text-primary-foreground'
+                            : 'bg-secondary text-secondary-foreground'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-4 space-y-3">
+                  <Button
+                    onClick={handleSamsungHealthNext}
+                    className="w-full h-14 rounded-xl text-base font-semibold gradient-primary text-primary-foreground"
+                  >
+                    연동하기
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={() => setMethod('select')}
+                    className="w-full py-3 text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    이전으로
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {method === 'samsung_health_sync' && (
+            <motion.div
+              key="samsung_health_sync"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-6"
+            >
+              <div className="bg-card rounded-2xl p-6 card-shadow text-center">
+                {!syncSuccess ? (
+                  <>
+                    <motion.div 
+                      className="w-20 h-20 mx-auto rounded-2xl bg-gradient-to-br from-red-500 to-orange-500 flex items-center justify-center mb-6 shadow-md"
+                      animate={isLoading ? { 
+                        boxShadow: [
+                          '0 0 0 0 rgba(59, 130, 246, 0)',
+                          '0 0 0 20px rgba(59, 130, 246, 0.2)',
+                          '0 0 0 0 rgba(59, 130, 246, 0)',
+                        ]
+                      } : {}}
+                      transition={{ duration: 1.5, repeat: Infinity }}
+                    >
+                      {isLoading ? (
+                        <RefreshCw className="w-10 h-10 text-white animate-spin" />
+                      ) : (
+                        <Heart className="w-10 h-10 text-white" />
+                      )}
+                    </motion.div>
+                    <h3 className="text-xl font-bold text-foreground">
+                      {isLoading ? '연동중...' : 'Samsung Health 연동'}
+                    </h3>
+                    <p className="text-muted-foreground mt-2">
+                      {isLoading 
+                        ? '데이터를 가져오고 있습니다. 잠시만 기다려주세요.'
+                        : 'Samsung Health 앱에 로그인되어 있는지 확인해주세요.'
+                      }
+                    </p>
+                    
+                    {/* 연동중 애니메이션 */}
+                    {isLoading && (
+                      <motion.div
+                        className="mt-6 flex justify-center gap-2"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                      >
+                        {[0, 1, 2].map((i) => (
+                          <motion.div
+                            key={i}
+                            className="w-3 h-3 rounded-full bg-primary"
+                            animate={{
+                              y: [0, -10, 0],
+                              opacity: [0.3, 1, 0.3],
+                            }}
+                            transition={{
+                              duration: 0.8,
+                              repeat: Infinity,
+                              delay: i * 0.2,
+                            }}
+                          />
+                        ))}
+                      </motion.div>
+                    )}
+                  </>
+                ) : !syncComplete ? (
+                  <>
+                    {/* 연동 성공 체크 애니메이션 */}
+                    <motion.div 
+                      className="w-20 h-20 mx-auto rounded-full bg-success/10 flex items-center justify-center mb-6"
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ type: 'spring', stiffness: 200, damping: 15 }}
+                    >
+                      <motion.div
+                        initial={{ scale: 0, rotate: -45 }}
+                        animate={{ scale: 1, rotate: 0 }}
+                        transition={{ delay: 0.2, type: 'spring', stiffness: 200 }}
+                      >
+                        <CheckCircle className="w-12 h-12 text-success" />
+                      </motion.div>
+                    </motion.div>
+                    <motion.h3 
+                      className="text-xl font-bold text-foreground"
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.3 }}
+                    >
+                      연동 완료!
+                    </motion.h3>
+                    <motion.p 
+                      className="text-muted-foreground mt-2"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.4 }}
+                    >
+                      데이터를 저장하고 있습니다...
+                    </motion.p>
+                  </>
+                ) : (
+                  <>
+                    <motion.div 
+                      className="w-20 h-20 mx-auto rounded-full bg-success/10 flex items-center justify-center mb-6"
+                      animate={{ 
+                        boxShadow: [
+                          '0 0 0 0 rgba(34, 197, 94, 0.4)',
+                          '0 0 0 20px rgba(34, 197, 94, 0)',
+                        ]
+                      }}
+                      transition={{ duration: 1.5, repeat: Infinity }}
+                    >
+                      <CheckCircle className="w-12 h-12 text-success" />
+                    </motion.div>
+                    <h3 className="text-xl font-bold text-foreground">동기화 완료!</h3>
+                    <p className="text-muted-foreground mt-2">
+                      메인 화면으로 이동합니다...
+                    </p>
+                  </>
+                )}
+              </div>
+
+              {/* Error Popup */}
+              <AnimatePresence>
+                {syncError && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.9 }}
+                    className="bg-destructive/10 border border-destructive/20 rounded-2xl p-4 flex items-start gap-3"
+                  >
+                    <AlertCircle className="w-6 h-6 text-destructive flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <h4 className="font-semibold text-destructive">동기화 오류</h4>
+                      <p className="text-destructive/80 text-sm mt-1">
+                        네트워크 연결을 확인하고 다시 시도해주세요.
+                      </p>
+                    </div>
+                    <button 
+                      onClick={() => setSyncError(false)}
+                      className="text-destructive/60 hover:text-destructive"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {!syncSuccess && (
+                <div className="space-y-3">
+                  <Button
+                    onClick={handleSamsungHealthSync}
+                    disabled={isLoading}
+                    className="w-full h-14 rounded-xl text-base font-semibold gradient-primary text-primary-foreground"
+                  >
+                    {isLoading ? '연동중...' : syncError ? '다시 시도' : '연동 시작'}
+                  </Button>
+                  <button
+                    onClick={() => setMethod('samsung_health')}
+                    className="w-full py-3 text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    이전으로
+                  </button>
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {method === 'manual' && (
+            <motion.div
+              key="manual"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+            >
+              <form onSubmit={handleManualSubmit} className="space-y-5">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-sm text-muted-foreground">키 (cm)</Label>
+                    <Input
+                      type="number"
+                      placeholder="175"
+                      value={height}
+                      onChange={(e) => setHeight(e.target.value)}
+                      className="h-14 rounded-xl bg-secondary/50 text-center text-lg font-semibold"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm text-muted-foreground">몸무게 (kg)</Label>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      placeholder="70"
+                      value={weight}
+                      onChange={(e) => setWeight(e.target.value)}
+                      className="h-14 rounded-xl bg-secondary/50 text-center text-lg font-semibold"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-sm text-muted-foreground">성별</Label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setGender('male')}
+                      className={`h-14 rounded-xl font-semibold transition-all ${
+                        gender === 'male'
+                          ? 'gradient-primary text-primary-foreground'
+                          : 'bg-secondary text-secondary-foreground'
+                      }`}
+                    >
+                      남성
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setGender('female')}
+                      className={`h-14 rounded-xl font-semibold transition-all ${
+                        gender === 'female'
+                          ? 'gradient-primary text-primary-foreground'
+                          : 'bg-secondary text-secondary-foreground'
+                      }`}
+                    >
+                      여성
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-sm text-muted-foreground">목표</Label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { value: '건강 유지', label: '건강 유지' },
+                      { value: '체중 감량', label: '체중 감량' },
+                      { value: '근육 증가', label: '근육 증가' },
+                    ].map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setGoal(option.value)}
+                        className={`h-12 rounded-xl text-sm font-medium transition-all ${
+                          goal === option.value
+                            ? 'gradient-primary text-primary-foreground'
+                            : 'bg-secondary text-secondary-foreground'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-4 space-y-3">
+                  <Button
+                    type="submit"
+                    disabled={isLoading}
+                    className="w-full h-14 rounded-xl text-base font-semibold gradient-primary text-primary-foreground"
+                  >
+                    {isLoading ? '저장 중...' : '저장하기'}
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={() => setMethod('select')}
+                    className="w-full py-3 text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    이전으로
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+};
+
+export default OnboardingPage;
