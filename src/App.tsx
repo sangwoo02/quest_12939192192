@@ -29,10 +29,11 @@ import { useAppStore } from "@/stores/appStore";
 import SplashPage from "./pages/SplashPage";
 import AuthPage from "./pages/AuthPage";
 import OnboardingPage from "./pages/OnboardingPage";
-import MainPage from "./pages/MainPage";
 import InBodyPage from "./pages/InBodyPage";
+import HistoryPage from "./pages/HistoryPage";
 import GamePage from "./pages/GamePage";
 import ProfilePage from "./pages/ProfilePage";
+import MissionCoinShopPage from "./pages/MissionCoinShopPage";
 import NotFound from "./pages/NotFound";
 
 // React Query 클라이언트 인스턴스 생성
@@ -87,9 +88,13 @@ const App = () => (
           />
           <Route 
             path="/main" 
+            element={<Navigate to="/inbody" replace />} 
+          />
+          <Route 
+            path="/history" 
             element={
               <ProtectedRoute>
-                <MainPage />
+                <HistoryPage />
               </ProtectedRoute>
             } 
           />
@@ -117,6 +122,15 @@ const App = () => (
               </ProtectedRoute>
             } 
           />
+          <Route 
+            path="/mission-coin-shop" 
+            element={
+              <ProtectedRoute>
+                <MissionCoinShopPage />
+              </ProtectedRoute>
+            } 
+          />
+
           
           {/* ⚠️ 새 라우트는 반드시 이 위에 추가하세요! */}
           <Route path="*" element={<NotFound />} />

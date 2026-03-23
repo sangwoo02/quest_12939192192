@@ -1,43 +1,35 @@
 /**
  * 🗄️ 앱 전역 상태 관리 스토어
- *
+ * 
  * Zustand를 사용한 전역 상태 관리입니다.
  * localStorage에 persist되어 새로고침 시에도 상태가 유지됩니다.
- *
- * 📝 수정 가이드:
- * - 새 상태 추가: AppStore 인터페이스와 초기값에 추가
- * - 새 액션 추가: AppStore 인터페이스와 구현부에 추가
- * - 저장 제외 항목: partialize 함수에서 필터링
- * - 저장소 키 변경: persist의 name 옵션 수정
- *
+ * 
  * 📦 상태 구조:
  * - Auth: 로그인 상태, 유저 정보, 토큰
  * - Onboarding: 온보딩 완료, 신체 데이터 입력 상태
  * - Data: InBody 데이터, 수동 입력 데이터, 목표 체중, 미션
+ * - Game: 캐릭터, 코인, 경험치, 레벨, 배지
  * - Permissions: GPS, 알림 권한
  * - Wearable: 웨어러블 기기 연결 정보
- *
- * 🔧 헬퍼 함수:
- * - validateLogin: 로그인 검증 (mock)
- * - checkEmailExists: 이메일 중복 체크
- *
- * ⚠️ 주의사항:
- * - rememberMe가 false면 로그인 정보 저장 안 됨
- * - 백엔드 연결 시 mock 함수들 실제 API로 교체 필요
+ * - History: 활동 기록, 몸무게 기록
  */
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { InBodyData, ManualInputData, WearableDevice, User, Mission } from '@/types';
 
-const AUTO_LOGIN_KEY = 'auto_login_checked';
+export const AUTO_LOGIN_KEY = 'auto_login_checked';
 
-type RegisteredUser = {
-  username: string;
-  password: string;
-  nickname: string;
-  birthDate: string;
-};
+interface ActivityRecord {
+  date: string; // YYYY-MM-DD
+  steps: number;
+  calories: number;
+}
+
+interface WeightRecord {
+  weight: number;
+  recordedAt: string; // ISO string
+}
 
 const INITIAL_AUTH_STATE = {
   isLoggedIn: false,
@@ -57,6 +49,20 @@ const INITIAL_USER_DATA_STATE = {
   missions: [] as Mission[],
 };
 
+const INITIAL_GAME_STATE = {
+  hasCreatedCharacter: false,
+  selectedCharacter: null as string | null,
+  selectedBackground: null as string | null,
+  coins: 0,
+  exp: 0,
+  level: 1,
+  requiredExp: 100,
+  equippedBadge: null as string | null,
+  missionCoins: 0,
+  dailyMissionRegenCount: 0,
+  dailyMissionRegenDate: null as string | null,
+};
+
 const INITIAL_DEVICE_STATE = {
   permissions: {
     gps: false,
@@ -65,42 +71,64 @@ const INITIAL_DEVICE_STATE = {
   wearableDevice: null as WearableDevice | null,
 };
 
+const INITIAL_HISTORY_STATE = {
+  activityHistory: [] as ActivityRecord[],
+  weightHistory: [] as WeightRecord[],
+};
+
 interface AppStore {
   // Auth State
   isLoggedIn: boolean;
   user: User | null;
   rememberMe: boolean;
   authToken: string | null;
-
+  
   // Onboarding State
   hasCompletedOnboarding: boolean;
   hasInBodyData: boolean;
-  hasInBodySynced: boolean; // true if data came from InBody sync, false if manual input
+  hasInBodySynced: boolean;
   hasMissionsGenerated: boolean;
-
-  // Registered users (mock - 백엔드 연결 전 테스트용)
-  registeredUsers: RegisteredUser[];
-
+  
+  
   // Data
   inBodyData: InBodyData | null;
   manualData: ManualInputData | null;
   targetWeight: number | null;
   missions: Mission[];
-
+  
+  // Game State
+  hasCreatedCharacter: boolean;
+  selectedCharacter: string | null;
+  selectedBackground: string | null;
+  coins: number;
+  exp: number;
+  level: number;
+  requiredExp: number;
+  equippedBadge: string | null;
+  missionCoins: number;
+  dailyMissionRegenCount: number;
+  dailyMissionRegenDate: string | null;
+  
   // Permissions
   permissions: {
     gps: boolean;
     notifications: boolean;
   };
-
+  
   // Wearable
   wearableDevice: WearableDevice | null;
-
+  
+  // History
+  activityHistory: ActivityRecord[];
+  weightHistory: WeightRecord[];
+  
+  setActivityHistory: (records: ActivityRecord[]) => void;
+  setWeightHistory: (records: WeightRecord[]) => void;
+  
   // Actions
-  registerUser: (username: string, password: string, nickname: string, birthDate: string) => void;
   login: (user: User, rememberMe: boolean, token?: string) => void;
   logout: () => void;
-  deleteAccount: () => void; // 회원탈퇴 - registeredUsers에서도 삭제
+  deleteAccount: () => void;
   setAuthToken: (token: string | null) => void;
   setOnboardingComplete: (complete: boolean) => void;
   setInBodyData: (data: InBodyData | null) => void;
@@ -110,7 +138,21 @@ interface AppStore {
   setMissionsGenerated: (generated: boolean) => void;
   setMissions: (missions: Mission[]) => void;
   setTargetWeight: (weight: number | null) => void;
+  setCharacter: (characterId: string, backgroundId: string) => void;
+  setSelectedBackground: (backgroundId: string) => void;
+  setSelectedCharacter: (characterId: string) => void;
+  addCoins: (amount: number) => void;
+  addExp: (amount: number) => void;
+  setEquippedBadge: (badgeId: string | null) => void;
+  addActivityRecord: (steps: number, calories: number) => void;
+  addWeightRecord: (weight: number) => void;
   resetUserData: () => void;
+  addMissionCoins: (amount: number) => void;
+  useMissionCoin: () => boolean;
+  incrementDailyRegen: () => void;
+  getDailyRegenRemaining: () => number;
+
+  
 }
 
 export const useAppStore = create<AppStore>()(
@@ -119,155 +161,176 @@ export const useAppStore = create<AppStore>()(
       // Initial State
       ...INITIAL_AUTH_STATE,
       ...INITIAL_USER_DATA_STATE,
+      ...INITIAL_GAME_STATE,
       ...INITIAL_DEVICE_STATE,
-      registeredUsers: [],
-
-      // Actions
-      registerUser: (username, password, nickname, birthDate) =>
-        set((state) => ({
-          registeredUsers: [
-            ...state.registeredUsers,
-            { username, password, nickname, birthDate },
-          ],
-        })),
-
+      ...INITIAL_HISTORY_STATE,
+      
+      
       login: (user, rememberMe, token) =>
         set({
           ...INITIAL_USER_DATA_STATE,
+          ...INITIAL_GAME_STATE,
+          ...INITIAL_HISTORY_STATE,
+
           isLoggedIn: true,
           user,
           rememberMe,
           authToken: token || null,
         }),
-
+      
       logout: () => {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('token_type');
-        localStorage.removeItem('auth_token');
+        localStorage.removeItem("access_token");
+        localStorage.removeItem("token_type");
+        localStorage.removeItem("auth_token");
         localStorage.removeItem(AUTO_LOGIN_KEY);
 
         set({
           ...INITIAL_AUTH_STATE,
           ...INITIAL_USER_DATA_STATE,
+          ...INITIAL_GAME_STATE,
           ...INITIAL_DEVICE_STATE,
+          ...INITIAL_HISTORY_STATE,
         });
       },
-
-      // 회원탈퇴 - registeredUsers에서도 해당 유저 삭제
+            
       deleteAccount: () => {
-        const currentUser = get().user;
-
         localStorage.removeItem('access_token');
         localStorage.removeItem('token_type');
         localStorage.removeItem('auth_token');
         localStorage.removeItem(AUTO_LOGIN_KEY);
 
-        set((state) => ({
+        set({
           ...INITIAL_AUTH_STATE,
           ...INITIAL_USER_DATA_STATE,
+          ...INITIAL_GAME_STATE,
           ...INITIAL_DEVICE_STATE,
-          registeredUsers: currentUser
-            ? state.registeredUsers.filter((u) => u.username !== currentUser.username)
-            : state.registeredUsers,
-        }));
+          ...INITIAL_HISTORY_STATE,
+        });
       },
-
-      setAuthToken: (token) =>
-        set({
-          authToken: token,
-        }),
-
-      setOnboardingComplete: (complete) =>
-        set({
-          hasCompletedOnboarding: complete,
-        }),
-
-      setInBodyData: (data) =>
-        set({
+      
+      setAuthToken: (token) => set({ authToken: token }),
+      
+      setOnboardingComplete: (complete) => set({ 
+        hasCompletedOnboarding: complete 
+      }),
+      
+      setInBodyData: (data) => {
+        const state = get();
+        const newState: any = {
           inBodyData: data,
           manualData: null,
           hasInBodyData: !!data,
           hasInBodySynced: !!data,
-        }),
+        };
 
-      setManualData: (data) =>
-        set({
+        if (data) {
+          const last = state.weightHistory[state.weightHistory.length - 1];
+          if (!last || last.weight !== data.weight) {
+            newState.weightHistory = [
+              ...state.weightHistory,
+              { weight: data.weight, recordedAt: new Date().toISOString() },
+            ];
+          }
+        }
+
+        set(newState);
+      },
+      
+      setManualData: (data) => {
+        const state = get();
+        const newState: any = { 
           manualData: data,
           inBodyData: null,
           hasInBodyData: !!data,
           hasInBodySynced: false,
-        }),
+        };
+        if (data) {
+          const last = state.weightHistory[state.weightHistory.length - 1];
+          if (!last || last.weight !== data.weight) {
+            newState.weightHistory = [...state.weightHistory, { weight: data.weight, recordedAt: new Date().toISOString() }];
+          }
+        }
+        set(newState);
+      },
 
-      setPermissions: (permissions) =>
-        set((state) => ({
-          permissions: {
-            ...state.permissions,
-            ...permissions,
-          },
-        })),
-
-      setWearableDevice: (device) =>
-        set({
-          wearableDevice: device,
-        }),
-
-      setMissionsGenerated: (generated) =>
-        set({
-          hasMissionsGenerated: generated,
-        }),
-
-      setMissions: (missions) =>
-        set({
-          missions,
-        }),
-
-      setTargetWeight: (weight) =>
-        set({
-          targetWeight: weight,
-        }),
-
-      resetUserData: () =>
-        set({
-          ...INITIAL_USER_DATA_STATE,
-        }),
+      setActivityHistory: (records) => set({ activityHistory: records }),
+      setWeightHistory: (records) => set({ weightHistory: records }),
+      
+      setPermissions: (permissions) => set((state) => ({ 
+        permissions: { ...state.permissions, ...permissions } 
+      })),
+      
+      setWearableDevice: (device) => set({ wearableDevice: device }),
+      
+      setMissionsGenerated: (generated) => set({ hasMissionsGenerated: generated }),
+      
+      setMissions: (missions) => set({ missions }),
+      
+      setTargetWeight: (weight) => set({ targetWeight: weight }),
+      
+      setCharacter: (characterId, backgroundId) => set({ 
+        selectedCharacter: characterId, 
+        selectedBackground: backgroundId,
+        hasCreatedCharacter: true,
+      }),
+      setSelectedBackground: (backgroundId) => set({ selectedBackground: backgroundId }),
+      setSelectedCharacter: (characterId) => set({ selectedCharacter: characterId }),
+      addCoins: (amount) => set((state) => ({ coins: state.coins + amount })),
+      addExp: (amount) => set((state) => {
+        const newExp = state.exp + amount;
+        if (newExp >= state.requiredExp) {
+          return { 
+            exp: newExp - state.requiredExp, 
+            level: state.level + 1, 
+            requiredExp: Math.floor(state.requiredExp * 1.5) 
+          };
+        }
+        return { exp: newExp };
+      }),
+      setEquippedBadge: (badgeId) => set({ equippedBadge: badgeId }),
+      addMissionCoins: (amount) => set((state) => ({ missionCoins: state.missionCoins + amount })),
+      useMissionCoin: () => {
+        const state = get();
+        if (state.missionCoins <= 0) return false;
+        set({ missionCoins: state.missionCoins - 1 });
+        return true;
+      },
+      incrementDailyRegen: () => set((state) => {
+        const today = new Date().toISOString().split('T')[0];
+        if (state.dailyMissionRegenDate !== today) {
+          return { dailyMissionRegenCount: 1, dailyMissionRegenDate: today };
+        }
+        return { dailyMissionRegenCount: state.dailyMissionRegenCount + 1 };
+      }),
+      getDailyRegenRemaining: () => {
+        const state = get();
+        const today = new Date().toISOString().split('T')[0];
+        if (state.dailyMissionRegenDate !== today) return 3;
+        return Math.max(0, 3 - state.dailyMissionRegenCount);
+      },
+      addActivityRecord: (steps, calories) => set((state) => {
+        const today = new Date().toISOString().split('T')[0];
+        const filtered = state.activityHistory.filter(a => a.date !== today);
+        return { activityHistory: [...filtered, { date: today, steps, calories }] };
+      }),
+      addWeightRecord: (weight) => set((state) => {
+        const last = state.weightHistory[state.weightHistory.length - 1];
+        if (last && last.weight === weight) return {};
+        return { weightHistory: [...state.weightHistory, { weight, recordedAt: new Date().toISOString() }] };
+      }),
+      resetUserData: () => set({
+        ...INITIAL_USER_DATA_STATE,
+        ...INITIAL_GAME_STATE,
+        ...INITIAL_HISTORY_STATE,
+      }),
     }),
     {
       name: 'health-quest-storage',
-      partialize: (state) =>
-        state.rememberMe
-          ? state
-          : {
-              ...state,
-              ...INITIAL_AUTH_STATE,
-            },
+      partialize: (state) => 
+        state.rememberMe 
+          ? state 
+          : { ...state, ...INITIAL_AUTH_STATE },
     }
   )
 );
 
-// Helper function to validate login (mock - 백엔드 연결 전 테스트용)
-// TODO: 백엔드 연결 후 api.auth.login() 사용으로 교체
-export const validateLogin = (
-  username: string,
-  password: string
-): { valid: boolean; nickname?: string; birthDate?: string } => {
-  const state = useAppStore.getState();
-  const user = state.registeredUsers.find(
-    (u) => u.username === username && u.password === password
-  );
-
-  if (user) {
-    return {
-      valid: true,
-      nickname: user.nickname,
-      birthDate: user.birthDate,
-    };
-  }
-
-  return { valid: false };
-};
-
-// Helper function to check if email already exists (이메일 중복 체크)
-export const checkEmailExists = (email: string): boolean => {
-  const state = useAppStore.getState();
-  return state.registeredUsers.some((u) => u.username === email);
-};

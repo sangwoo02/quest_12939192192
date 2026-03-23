@@ -5,16 +5,43 @@
  * 몸무게 변동 그래프를 표시합니다.
  */
 
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Footprints, Flame, Scale, TrendingUp, Lock, HelpCircle, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Footprints, Flame, Scale, TrendingUp, Lock, HelpCircle, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { useAppStore } from '@/stores/appStore';
 import AppLayout from '@/components/AppLayout';
-import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { useRnBridge } from '@/hooks/useRnBridge';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
+// 주어진 날짜가 속한 주의 월요일을 반환
+const getMonday = (date: Date) => {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  d.setDate(diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+// 월요일부터 일요일까지 7일 배열 반환
+const getWeekDays = (monday: Date) => {
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    days.push(d);
+  }
+  return days;
+};
+
+const formatLocalDate = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const HistoryPage = () => {
   const navigate = useNavigate();
@@ -29,26 +56,15 @@ const HistoryPage = () => {
   const { rnRequest } = useRnBridge();
   const [isLoading, setIsLoading] = useState(false);
 
-  // 최근 7일 데이터 생성 (오늘 포함)
-  const getLast7Days = () => {
-    const days = [];
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      days.push(date);
-    }
-    return days;
-  };
+  // 현재 보고있는 주의 월요일 (기본: 이번 주)
+  const [currentMonday, setCurrentMonday] = useState(() => getMonday(new Date()));
 
-  const last7Days = getLast7Days();
+  const weekDays = getWeekDays(currentMonday);
+  const sunday = weekDays[6];
+  const weekStart = formatLocalDate(currentMonday);
+  const weekEnd = formatLocalDate(sunday);
 
-  const formatLocalDate = (date: Date) => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
-
+  // 백엔드에서 히스토리 데이터 가져오기
   useEffect(() => {
     const fetchHistory = async () => {
       if (!hasInBodySynced) return;
@@ -59,7 +75,11 @@ const HistoryPage = () => {
       setIsLoading(true);
 
       try {
-        const result = await rnRequest("HEALTHCARE_HISTORY_REQUEST", { token });
+        const result = await rnRequest("HEALTHCARE_HISTORY_REQUEST", {
+          token,
+          week_start: weekStart,
+          week_end: weekEnd,
+        });
 
         setActivityHistory(result?.activity_history || []);
         setWeightHistory(result?.weight_history || []);
@@ -71,24 +91,53 @@ const HistoryPage = () => {
     };
 
     fetchHistory();
-  }, [hasInBodySynced, rnRequest, setActivityHistory, setWeightHistory]);
+  }, [hasInBodySynced, currentMonday, weekStart, weekEnd]);
 
+  const isCurrentWeek = getMonday(new Date()).getTime() === currentMonday.getTime();
+
+  const goToPrevWeek = () => {
+    const prev = new Date(currentMonday);
+    prev.setDate(prev.getDate() - 7);
+    setCurrentMonday(prev);
+  };
+
+  const goToNextWeek = () => {
+    if (isCurrentWeek) return;
+    const next = new Date(currentMonday);
+    next.setDate(next.getDate() + 7);
+    setCurrentMonday(next);
+  };
+
+  // 주간 날짜 범위 포맷
+  const formatWeekRange = () => {
+    const monYear = currentMonday.getFullYear();
+    const sunYear = sunday.getFullYear();
+    const mon = `${currentMonday.getMonth() + 1}.${currentMonday.getDate()}`;
+    const sun = `${sunday.getMonth() + 1}.${sunday.getDate()}`;
+    if (monYear !== sunYear) {
+      return `${monYear}.${mon} - ${sunYear}.${sun}`;
+    }
+    return `${monYear}.${mon} - ${sun}`;
+  };
 
   const getActivityForDate = (date: Date) => {
     const dateStr = formatLocalDate(date);
-    return activityHistory.find(a => a.date === dateStr) || {
-      date: dateStr,
-      steps: 0,
-      calories: 0,
-    };
+    return activityHistory.find(a => a.date === dateStr) || { date: dateStr, steps: 0, calories: 0 };
   };
 
-  const weeklyData = last7Days.map(d => ({
-    date: d,
-    label: `${d.getMonth() + 1}/${d.getDate()}`,
-    dayLabel: ['일', '월', '화', '수', '목', '금', '토'][d.getDay()],
-    ...getActivityForDate(d),
-  }));
+  const weeklyData = weekDays.map(d => {
+    const activity = getActivityForDate(d);
+    return {
+      dateObj: d,
+      label: `${d.getMonth() + 1}/${d.getDate()}`,
+      dayLabel: ['일', '월', '화', '수', '목', '금', '토'][d.getDay()],
+      steps: activity.steps,
+      calories: activity.calories,
+    };
+  });
+
+  const today = new Date();
+  const todayStr = formatLocalDate(today);
 
   const maxSteps = Math.max(...weeklyData.map(d => d.steps), 1);
   const maxCalories = Math.max(...weeklyData.map(d => d.calories), 1);
@@ -118,8 +167,7 @@ const HistoryPage = () => {
             >
               <ArrowLeft className="w-5 h-5 text-primary-foreground" />
             </button>
-            <h1 className="text-xl font-bold text-primary-foreground">활동 히스토리</h1>
-                      <h1 className="text-xl font-bold text-primary-foreground flex-1"></h1>
+            <h1 className="text-xl font-bold text-primary-foreground flex-1">활동 히스토리</h1>
             <Popover>
               <PopoverTrigger asChild>
                 <button className="w-8 h-8 rounded-lg bg-primary-foreground/10 flex items-center justify-center">
@@ -180,7 +228,7 @@ const HistoryPage = () => {
 
           {/* 잠금된 걸음 수 그래프 */}
           <div className="bg-muted/50 rounded-2xl p-5 relative overflow-hidden" style={{ minHeight: '200px' }}>
-            <div className="flex items-center gap-2 mb-4 opacity-50">
+            <div className="flex items-center gap-2 mb-5 opacity-50">
               <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
                 <Footprints className="w-4 h-4 text-muted-foreground" />
               </div>
@@ -197,7 +245,7 @@ const HistoryPage = () => {
 
           {/* 잠금된 활동 칼로리 그래프 */}
           <div className="bg-muted/50 rounded-2xl p-5 relative overflow-hidden" style={{ minHeight: '200px' }}>
-            <div className="flex items-center gap-2 mb-4 opacity-50">
+            <div className="flex items-center gap-2 mb-5 opacity-50">
               <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center">
                 <Flame className="w-4 h-4 text-muted-foreground" />
               </div>
@@ -234,7 +282,7 @@ const HistoryPage = () => {
   }
 
   return (
-   <AppLayout>
+    <AppLayout>
       {/* Header */}
       <div className="gradient-primary px-6 pt-safe-top pb-6">
         <div className="flex items-center gap-3 pt-3">
@@ -260,21 +308,20 @@ const HistoryPage = () => {
                     <p className="text-warning font-semibold text-xs">동기화 안내</p>
                   </div>
                   <p className="text-warning-foreground/80 text-[11px] leading-relaxed">
-                    반드시 동기화를 해주셔야 누적 반영이 됩니다. 앱의 최적화 사용을 위해 직접 수동 동기화 갱신을 합니다. 
-                    활동을 마치고 자정 00시 전까지 <span className="font-semibold text-warning">"프로필 → Samsung Health 동기화 갱신"</span>을 진행해주세요.
+                    활동을 마친 후 동기화가 되지 않았다면 수동으로 진행해야 합니다.<span className="font-semibold text-warning"> "프로필 → Samsung Health 동기화 갱신"</span>을 진행해주세요.
                   </p>
                 </div>
                 <div className="px-4 py-3 space-y-3">
                   <div>
                     <p className="text-foreground font-medium mb-1.5 text-xs">주간 평균 표시 안내</p>
                     <p className="text-muted-foreground text-[11px] leading-relaxed">
-                      주간 평균 걸음과 평균 칼로리는 최근 7일간의 데이터를 기반으로 평균 값을 계산하여 표시합니다.
+                      주간 평균 걸음과 평균 칼로리는 선택된 주(월요일~일요일)의 데이터를 기준으로 평균 값을 계산하여 표시합니다.
                     </p>
                   </div>
                   <div>
-                    <p className="text-foreground font-medium mb-1.5 text-xs">활동 기록 안내</p>
+                    <p className="text-foreground font-medium mb-1.5 text-xs">활동 기록 안내 (최초 연동 시 최대 180일까지 반영)</p>
                     <p className="text-muted-foreground text-[11px] leading-relaxed">
-                      최근 7일간의 활동 기록을 보여줍니다. 매일 날짜가 바뀌면 새로운 하루가 추가되고, 가장 오래된 기록은 자동으로 제외됩니다.
+                      이 그래프는 선택한 주(월요일~일요일)의 활동 기록을 보여줍니다. 상단의 &lt; &gt; 버튼을 통해 히스토리 기록을 확인할 수 있습니다.
                     </p>
                   </div>
                 </div>
@@ -284,8 +331,24 @@ const HistoryPage = () => {
       </div>
 
       <div className="px-6 py-4 space-y-5">
+        {/* 주간 네비게이션 */}
+        <div className="flex items-center justify-between">
+          <button onClick={goToPrevWeek} className="w-9 h-9 rounded-xl bg-card card-shadow flex items-center justify-center">
+            <ChevronLeft className="w-5 h-5 text-foreground" />
+          </button>
+          <span className="text-sm font-semibold text-foreground">{formatWeekRange()}</span>
+          <button
+            onClick={goToNextWeek}
+            disabled={isCurrentWeek}
+            className={`w-9 h-9 rounded-xl bg-card card-shadow flex items-center justify-center ${isCurrentWeek ? 'opacity-30' : ''}`}
+          >
+            <ChevronRight className="w-5 h-5 text-foreground" />
+          </button>
+        </div>
+
         {/* 주간 요약 */}
         <motion.div
+          key={currentMonday.toISOString()}
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           className="grid grid-cols-2 gap-3"
@@ -293,7 +356,7 @@ const HistoryPage = () => {
           <div className="bg-card rounded-2xl p-4 card-shadow">
             <div className="flex items-center gap-2 mb-1">
               <Footprints className="w-4 h-4 text-primary" />
-              <span className="text-xs text-muted-foreground">주간 평균 걸음 수</span>
+              <span className="text-xs text-muted-foreground">주간 평균 걸음</span>
             </div>
             <span className="text-xl font-bold text-foreground">{avgSteps.toLocaleString()}</span>
             <span className="text-xs text-muted-foreground ml-1">걸음</span>
@@ -301,7 +364,7 @@ const HistoryPage = () => {
           <div className="bg-card rounded-2xl p-4 card-shadow">
             <div className="flex items-center gap-2 mb-1">
               <Flame className="w-4 h-4 text-destructive" />
-              <span className="text-xs text-muted-foreground">주간 평균 칼로리 소모</span>
+              <span className="text-xs text-muted-foreground">주간 평균 칼로리</span>
             </div>
             <span className="text-xl font-bold text-foreground">{avgCalories.toLocaleString()}</span>
             <span className="text-xs text-muted-foreground ml-1">kcal</span>
@@ -315,23 +378,23 @@ const HistoryPage = () => {
           transition={{ delay: 0.1 }}
           className="bg-card rounded-2xl p-5 card-shadow"
         >
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex items-center gap-2 mb-5">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary/20 to-info/15 flex items-center justify-center">
               <Footprints className="w-4 h-4 text-primary" />
             </div>
             <h2 className="text-sm font-semibold text-foreground">일주일 걸음 수</h2>
           </div>
 
-          <div className="flex items-end gap-2 h-51">
+          <div className="flex items-end gap-2 h-52">
             {weeklyData.map((day, i) => {
               const heightPercent = maxSteps > 0 ? (day.steps / maxSteps) * 100 : 0;
-              const isToday = i === 6;
+              const isToday = formatLocalDate(day.dateObj) === todayStr;
               return (
                 <div key={day.label} className="flex-1 flex flex-col items-center gap-1">
                   <span className="text-[10px] text-muted-foreground font-medium">
                     {day.steps > 0 ? (day.steps >= 1000 ? `${(day.steps / 1000).toFixed(1)}k` : day.steps) : ''}
                   </span>
-                  <div className="w-full flex items-end" style={{ height: '120px' }}>
+                  <div className="w-full flex items-end" style={{ height: '160px' }}>
                     <motion.div
                       initial={{ height: 0 }}
                       animate={{ height: `${Math.max(heightPercent, 4)}%` }}
@@ -364,23 +427,23 @@ const HistoryPage = () => {
           transition={{ delay: 0.2 }}
           className="bg-card rounded-2xl p-5 card-shadow"
         >
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex items-center gap-2 mb-5">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-destructive/20 to-warning/15 flex items-center justify-center">
               <Flame className="w-4 h-4 text-destructive" />
             </div>
             <h2 className="text-sm font-semibold text-foreground">일주일 활동 칼로리</h2>
           </div>
 
-          <div className="flex items-end gap-2 h-51">
+          <div className="flex items-end gap-2 h-52">
             {weeklyData.map((day, i) => {
               const heightPercent = maxCalories > 0 ? (day.calories / maxCalories) * 100 : 0;
-              const isToday = i === 6;
+              const isToday = formatLocalDate(day.dateObj) === todayStr;
               return (
                 <div key={day.label} className="flex-1 flex flex-col items-center gap-1">
                   <span className="text-[10px] text-muted-foreground font-medium">
                     {day.calories > 0 ? day.calories : ''}
                   </span>
-                  <div className="w-full flex items-end" style={{ height: '120px' }}>
+                  <div className="w-full flex items-end" style={{ height: '160px' }}>
                     <motion.div
                       initial={{ height: 0 }}
                       animate={{ height: `${Math.max(heightPercent, 4)}%` }}
@@ -458,15 +521,13 @@ const WeightGraph = ({ recentWeightHistory, yAxisValues, graphHeight }: WeightGr
   const yMin = 0;
 
   const getY = (weight: number) => {
-    
     const clamped = Math.min(Math.max(weight, yMin), yMax);
     return graphHeight - ((clamped - yMin) / (yMax - yMin)) * graphHeight;
   };
 
-    const getX = (i: number) => {
-      return paddingX + i * (drawableWidth / Math.max(recentWeightHistory.length - 1, 1));
-    };
-
+  const getX = (i: number) => {
+    return paddingX + i * (drawableWidth / Math.max(recentWeightHistory.length - 1, 1));
+  };
 
   return (
     <div className="relative h-52">
@@ -484,7 +545,7 @@ const WeightGraph = ({ recentWeightHistory, yAxisValues, graphHeight }: WeightGr
           {yAxisValues.map(v => {
             const y = getY(v);
             return (
-              <line key={v} x1="0" y1={y} x2={svgWidth} y2={y} stroke="hsl(var(--border))" strokeWidth="0.5" strokeDasharray="4" />
+              <line key={v} x1="0" y1={y} x2={svgWidth} y2={y} stroke="hsl(var(--border))" strokeWidth="1" strokeDasharray="4 3" opacity="0.7" />
             );
           })}
 
