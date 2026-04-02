@@ -1,32 +1,85 @@
-// API Configuration
-// TODO: 백엔드 URL을 실제 서버 주소로 변경하세요
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+// src/services/api.ts
 
-// Helper function to get auth token
-const getAuthToken = (): string | null => {
-  return localStorage.getItem('auth_token');
+import type {
+  ApiErrorResponse,
+  CheckUserDataResponse,
+  CompleteSlotRequest,
+  CompleteSlotResponse,
+  GameProfileResponse,
+  GenerateInitialMissionsRequest,
+  GenerateInitialMissionsResponse,
+  InitializeCharacterRequest,
+  InitializeCharacterResponse,
+  LatestHealthcareResponse,
+  LoginRequest,
+  LoginResponse,
+  RefreshSlotRequest,
+  RefreshSlotResponse,
+  ResetDailyRegenResponse,
+  SignupRequest,
+  SyncHealthcareRequest,
+  SyncHistoryRequest,
+  UnlinkHealthcareResponse,
+  UseMissionCoinResponse,
+  CurrentMission,
+
+  // ✅ 추가
+  PurchaseCharacterRequest,
+  PurchaseBackgroundRequest,
+  EquipCharacterRequest,
+  EquipBackgroundRequest,
+} from '@/types';
+
+// 백엔드 주소
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+// --------------------------------------------
+// 토큰 관련
+// --------------------------------------------
+const AUTH_TOKEN_KEY = 'auth_token';
+
+export const getAuthToken = (): string | null => {
+  return localStorage.getItem(AUTH_TOKEN_KEY);
 };
 
-// Helper function to set auth token
 export const setAuthToken = (token: string): void => {
-  localStorage.setItem('auth_token', token);
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
 };
 
-// Helper function to remove auth token
 export const removeAuthToken = (): void => {
-  localStorage.removeItem('auth_token');
+  localStorage.removeItem(AUTH_TOKEN_KEY);
 };
 
-// Base fetch wrapper with auth
+// --------------------------------------------
+// 공통 에러 처리
+// --------------------------------------------
+const parseErrorMessage = async (response: Response): Promise<string> => {
+  try {
+    const errorData = (await response.json()) as ApiErrorResponse;
+    return (
+      errorData.detail ||
+      errorData.message ||
+      `요청에 실패했습니다. (${response.status})`
+    );
+  } catch {
+    return `요청에 실패했습니다. (${response.status})`;
+  }
+};
+
+// --------------------------------------------
+// 공통 fetch
+// --------------------------------------------
 const fetchWithAuth = async (
   path: string,
   options: RequestInit = {}
 ): Promise<Response> => {
   const token = getAuthToken();
+
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...options.headers,
+    ...(options.headers || {}),
   };
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -37,65 +90,36 @@ const fetchWithAuth = async (
   return response;
 };
 
-// ============================================
-// Authentication API
-// ============================================
+const requestJson = async <T>(
+  path: string,
+  options: RequestInit = {}
+): Promise<T> => {
+  const response = await fetchWithAuth(path, options);
 
-export interface SignupRequest {
-  username: string;
-  password: string;
-  nickname: string;
-}
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response));
+  }
 
-export interface LoginRequest {
-  username: string;
-  password: string;
-}
+  return response.json() as Promise<T>;
+};
 
-export interface LoginResponse {
-  access_token: string;
-  token_type: string;
-  user: {
-    id: string;
-    username: string;
-    nickname: string;
-  };
-}
-
-export interface UpdateProfileRequest {
-  nickname: string;
-}
-
+// --------------------------------------------
+// Auth API
+// --------------------------------------------
 export const authApi = {
-  /**
-   * 회원가입
-   * POST /auth/signup
-   */
-  signup: async (data: SignupRequest): Promise<Response> => {
-    return fetchWithAuth('/auth/signup', {
+  signup: async (data: SignupRequest): Promise<{ message?: string; user_id?: number }> => {
+    return requestJson('/auth/signup', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   },
 
-  /**
-   * 로그인
-   * POST /auth/login
-   */
   login: async (data: LoginRequest): Promise<LoginResponse> => {
-    const response = await fetchWithAuth('/auth/login', {
+    const result = await requestJson<LoginResponse>('/auth/login', {
       method: 'POST',
       body: JSON.stringify(data),
     });
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || '로그인에 실패했습니다.');
-    }
-
-    const result = await response.json();
-    
-    // Store token
     if (result.access_token) {
       setAuthToken(result.access_token);
     }
@@ -103,214 +127,203 @@ export const authApi = {
     return result;
   },
 
-  /**
-   * 프로필 업데이트
-   * PATCH /auth/update-profile?nickname={nickname}
-   */
-  updateProfile: async (nickname: string): Promise<Response> => {
-    return fetchWithAuth(`/auth/update-profile?nickname=${encodeURIComponent(nickname)}`, {
+  updateProfile: async (nickname: string): Promise<{ message?: string }> => {
+    return requestJson(`/auth/update-profile?nickname=${encodeURIComponent(nickname)}`, {
       method: 'PATCH',
+    });
+  },
+
+  changePassword: async (currentPassword: string, newPassword: string): Promise<{ message?: string }> => {
+    return requestJson('/auth/change-password', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+      }),
+    });
+  },
+
+  logout: async (): Promise<{ message?: string }> => {
+    return requestJson('/auth/logout', {
+      method: 'POST',
+    });
+  },
+
+  deleteAccount: async (): Promise<{ ok?: boolean; message?: string }> => {
+    return requestJson('/auth/delete-account', {
+      method: 'DELETE',
     });
   },
 };
 
-// ============================================
-// InBody API
-// ============================================
-
-export interface SaveInbodyRequest {
-  name: string;
-  age: number;
-  gender: string;
-  height: number;
-  weight: number;
-  body_fat: number;
-  muscle_mass: number;
-  goal: string;
-}
-
-export interface InbodyResponse {
-  bmi: number;
-  bmr: number;
-  status_message: string | null;
-}
-
-export interface CheckDataResponse {
-  exists: boolean;
-  data: InbodyResponse | null;
-  message: string;
-}
-
-export const inbodyApi = {
-  /**
-   * InBody 데이터 저장
-   * POST /missions/save-inbody
-   */
-  saveInbody: async (data: SaveInbodyRequest): Promise<InbodyResponse> => {
-    const response = await fetchWithAuth('/missions/save-inbody', {
+// --------------------------------------------
+// Healthcare API
+// --------------------------------------------
+export const healthcareApi = {
+  sync: async (data: SyncHealthcareRequest): Promise<any> => {
+    return requestJson('/healthcare/sync', {
       method: 'POST',
       body: JSON.stringify(data),
     });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || 'InBody 데이터 저장에 실패했습니다.');
-    }
-
-    return response.json();
   },
 
-  /**
-   * InBody 데이터 업데이트
-   * PUT /missions/update-inbody
-   */
-  updateInbody: async (data: SaveInbodyRequest): Promise<InbodyResponse> => {
-    const response = await fetchWithAuth('/missions/update-inbody', {
-      method: 'PUT',
+  syncHistory: async (data: SyncHistoryRequest): Promise<any> => {
+    return requestJson('/healthcare/sync-history', {
+      method: 'POST',
       body: JSON.stringify(data),
     });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || 'InBody 데이터 업데이트에 실패했습니다.');
-    }
-
-    return response.json();
   },
 
-  /**
-   * 사용자 데이터 확인
-   * GET /missions/check-data
-   */
-  checkUserData: async (): Promise<CheckDataResponse> => {
-    const response = await fetchWithAuth('/missions/check-data', {
+  getLatestFast: async (): Promise<LatestHealthcareResponse> => {
+    return requestJson('/healthcare/latest-fast', {
       method: 'GET',
     });
+  },
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || '데이터 확인에 실패했습니다.');
-    }
+  getLatest: async (): Promise<any> => {
+    return requestJson('/healthcare/latest', {
+      method: 'GET',
+    });
+  },
 
-    return response.json();
+  getAverage: async (): Promise<any> => {
+    return requestJson('/healthcare/average', {
+      method: 'GET',
+    });
+  },
+
+  updateTargetWeight: async (targetWeight: number): Promise<{ ok: boolean; target_weight: number; inbody_id: number }> => {
+    return requestJson('/healthcare/target-weight', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        target_weight: targetWeight,
+      }),
+    });
+  },
+
+  unlink: async (): Promise<UnlinkHealthcareResponse> => {
+    return requestJson('/healthcare/unlink', {
+      method: 'DELETE',
+    });
   },
 };
 
-// ============================================
+// --------------------------------------------
 // Missions API
-// ============================================
-
-export interface Mission {
-  id: number;
-  title: string;
-  description: string;
-  type: 'exercise' | 'nutrition' | 'lifestyle';
-  difficulty: 'easy' | 'medium' | 'hard';
-  xp_reward: number;
-  status: 'pending' | 'in_progress' | 'completed' | 'failed';
-  created_at: string;
-  expires_at: string;
-}
-
-export interface GenerateMissionsResponse {
-  missions: Mission[];
-  message: string;
-}
-
+// --------------------------------------------
 export const missionsApi = {
-  /**
-   * 미션 생성 및 저장
-   * POST /missions/generate-and-save
-   */
-  generateAndSave: async (): Promise<GenerateMissionsResponse> => {
-    const response = await fetchWithAuth('/missions/generate-and-save', {
-      method: 'POST',
+  checkUserData: async (): Promise<CheckUserDataResponse> => {
+    return requestJson('/missions/check-data', {
+      method: 'GET',
     });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || '미션 생성에 실패했습니다.');
-    }
-
-    return response.json();
   },
 
-  /**
-   * 미션 완료
-   * PATCH /missions/complete/{mission_id}
-   */
-  completeMission: async (missionId: number): Promise<Response> => {
-    const response = await fetchWithAuth(`/missions/complete/${missionId}`, {
-      method: 'PATCH',
+  getCurrent: async (): Promise<CurrentMission[]> => {
+    return requestJson('/missions/current', {
+      method: 'GET',
     });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || '미션 완료 처리에 실패했습니다.');
-    }
-
-    return response;
   },
 
-  /**
-   * 미션 새로고침
-   * PATCH /missions/refresh/{mission_id}
-   */
-  refreshMission: async (missionId: number): Promise<Mission> => {
-    const response = await fetchWithAuth(`/missions/refresh/${missionId}`, {
-      method: 'PATCH',
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || '미션 새로고침에 실패했습니다.');
-    }
-
-    return response.json();
-  },
-};
-
-// ============================================
-// Wearable API
-// ============================================
-
-export interface SyncWearableRequest {
-  steps: number;
-  calories: number | null;
-  heart_rate: number | null;
-  sleep_minutes: number | null;
-  device_type: string;
-}
-
-export const wearableApi = {
-  /**
-   * 웨어러블 데이터 동기화
-   * POST /missions/sync-wearable
-   */
-  syncWearableData: async (data: SyncWearableRequest): Promise<Response> => {
-    const response = await fetchWithAuth('/missions/sync-wearable', {
+  generateInitial: async (
+    data: GenerateInitialMissionsRequest = { force_regenerate: false }
+  ): Promise<GenerateInitialMissionsResponse> => {
+    return requestJson('/missions/generate-initial', {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  },
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || '웨어러블 데이터 동기화에 실패했습니다.');
-    }
+  refreshSlot: async (data: RefreshSlotRequest): Promise<RefreshSlotResponse> => {
+    return requestJson('/missions/refresh-slot', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
 
-    return response;
+  completeSlot: async (data: CompleteSlotRequest): Promise<CompleteSlotResponse> => {
+    return requestJson('/missions/complete-slot', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   },
 };
 
-// ============================================
-// System API
-// ============================================
+// --------------------------------------------
+// Game API
+// --------------------------------------------
+export const gameApi = {
+  getProfile: async (): Promise<GameProfileResponse> => {
+    return requestJson('/game/profile', {
+      method: 'GET',
+    });
+  },
 
+  initializeCharacter: async (
+    data: InitializeCharacterRequest
+  ): Promise<InitializeCharacterResponse> => {
+    return requestJson('/game/initialize-character', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // ✅ 추가: 캐릭터 구매
+  purchaseCharacter: async (
+    data: PurchaseCharacterRequest
+  ): Promise<any> => {
+    return requestJson('/game/purchase-character', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // ✅ 추가: 배경 구매
+  purchaseBackground: async (
+    data: PurchaseBackgroundRequest
+  ): Promise<any> => {
+    return requestJson('/game/purchase-background', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // ✅ 추가: 캐릭터 장착
+  equipCharacter: async (
+    data: EquipCharacterRequest
+  ): Promise<any> => {
+    return requestJson('/game/equip-character', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // ✅ 추가: 배경 장착
+  equipBackground: async (
+    data: EquipBackgroundRequest
+  ): Promise<any> => {
+    return requestJson('/game/equip-background', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  useMissionCoin: async (): Promise<UseMissionCoinResponse> => {
+    return requestJson('/game/use-mission-coin', {
+      method: 'POST',
+    });
+  },
+
+  resetDailyRegenIfNeeded: async (): Promise<ResetDailyRegenResponse> => {
+    return requestJson('/game/reset-daily-regen-if-needed', {
+      method: 'POST',
+    });
+  },
+};
+
+// --------------------------------------------
+// System API
+// --------------------------------------------
 export const systemApi = {
-  /**
-   * 서버 상태 확인
-   * GET /
-   */
   healthCheck: async (): Promise<boolean> => {
     try {
       const response = await fetch(`${API_BASE_URL}/`);
@@ -320,14 +333,3 @@ export const systemApi = {
     }
   },
 };
-
-// Export all APIs
-export const api = {
-  auth: authApi,
-  inbody: inbodyApi,
-  missions: missionsApi,
-  wearable: wearableApi,
-  system: systemApi,
-};
-
-export default api;

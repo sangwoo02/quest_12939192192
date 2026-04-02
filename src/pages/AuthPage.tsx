@@ -210,24 +210,28 @@ const AuthPage = () => {
           token: accessToken,
         });
 
-        // 2) 기존에 inbody 데이터가 있으면 그 gender/goal로 자동 동기화 1회 실행
+        
+        // 2) 기존 데이터가 "HealthConnect 연동 상태"일 때만 자동 동기화 실행
         if (latest?.inbody) {
+          const existingSource = String(latest.inbody.source || "").toLowerCase();
           const existingGender = latest.inbody.gender || "male";
           const existingGoal = latest.inbody.goal || "건강 유지";
 
-          try {
-            await rnRequest("HC_SYNC_AND_SAVE_REQUEST", {
-              token: accessToken,
-              gender: existingGender,
-              goal: existingGoal,
-            });
+          if (existingSource === "healthconnect") {
+            try {
+              await rnRequest("HC_SYNC_AND_SAVE_REQUEST", {
+                token: accessToken,
+                gender: existingGender,
+                goal: existingGoal,
+              });
 
-            // 자동 동기화 후 최신 데이터 다시 조회
-            latest = await rnRequest("HEALTHCARE_LATEST_REQUEST", {
-              token: accessToken,
-            });
-          } catch (syncErr) {
-            console.warn("로그인 직후 자동 Health Sync 실패:", syncErr);
+              // 자동 동기화 후 최신 데이터 다시 조회
+              latest = await rnRequest("HEALTHCARE_LATEST_REQUEST", {
+                token: accessToken,
+              });
+            } catch (syncErr) {
+              console.warn("로그인 직후 자동 Health Sync 실패:", syncErr);
+            }
           }
         }
 

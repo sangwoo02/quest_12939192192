@@ -1,9 +1,13 @@
 /**
- * 🃏 포토카드 컴포넌트
- * 캐릭터 + 배경을 보여주는 대형 카드
+ * 🃏 포토카드 컴포넌트 - 서버 연동 버전
+ *
+ * 역할
+ * - 서버에 저장된 game profile 기준으로 캐릭터/배경/레벨/EXP 표시
+ * - 캐릭터 미생성 상태면 잠금 카드 표시
+ * - 잠금 카드 클릭 시 캐릭터 생성 다이얼로그 열기
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Lock, ArrowUp, Trophy, Sparkles } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
@@ -11,21 +15,47 @@ import { CHARACTERS, BACKGROUNDS, ACHIEVEMENTS } from './gameData';
 import CharacterSelectDialog from './CharacterSelectDialog';
 import AchievementsDialog from './AchievementsDialog';
 
+const getRequiredExpForLevel = (level: number) => {
+  // 백엔드에 아직 확정 레벨업 테이블이 없으므로
+  // 프론트에서는 임시 표시용으로만 사용
+  // 나중에 백엔드 레벨업 규칙이 확정되면 이 부분 같이 맞추면 됨
+  if (level <= 1) return 100;
+  return 100 + (level - 1) * 50;
+};
+
 const PhotoCard = () => {
-  const { 
-    hasCreatedCharacter, selectedCharacter, selectedBackground, 
-    level, exp, requiredExp, equippedBadge 
+  const {
+    hasCreatedCharacter,
+    selectedCharacter,
+    selectedBackground,
+    level,
+    exp,
+    equippedBadge,
   } = useAppStore();
+
   const [showCharSelect, setShowCharSelect] = useState(false);
   const [showAchievements, setShowAchievements] = useState(false);
 
-  const character = CHARACTERS.find(c => c.id === selectedCharacter);
-  const background = BACKGROUNDS.find(b => b.id === selectedBackground);
-  const badge = ACHIEVEMENTS.find(a => a.id === equippedBadge);
-  const expPercent = requiredExp > 0 ? (exp / requiredExp) * 100 : 0;
+  const character = useMemo(
+    () => CHARACTERS.find((c) => c.id === selectedCharacter),
+    [selectedCharacter]
+  );
+
+  const background = useMemo(
+    () => BACKGROUNDS.find((b) => b.id === selectedBackground),
+    [selectedBackground]
+  );
+
+  const badge = useMemo(
+    () => ACHIEVEMENTS.find((a) => a.id === equippedBadge),
+    [equippedBadge]
+  );
+
+  const requiredExp = getRequiredExpForLevel(level);
+  const expPercent = requiredExp > 0 ? Math.min(100, (exp / requiredExp) * 100) : 0;
   const canLevelUp = exp >= requiredExp;
 
-  // 잠금 상태
+  // 1) 아직 캐릭터를 생성하지 않은 상태
   if (!hasCreatedCharacter) {
     return (
       <>
@@ -40,14 +70,20 @@ const PhotoCard = () => {
           >
             <Lock className="w-12 h-12 text-white/30 mb-3" />
           </motion.div>
+
           <p className="text-white/50 font-semibold text-sm">캐릭터를 생성하세요</p>
           <p className="text-white/30 text-xs mt-1">탭하여 캐릭터 & 배경 선택</p>
         </motion.div>
-        <CharacterSelectDialog open={showCharSelect} onClose={() => setShowCharSelect(false)} />
+
+        <CharacterSelectDialog
+          open={showCharSelect}
+          onClose={() => setShowCharSelect(false)}
+        />
       </>
     );
   }
 
+  // 2) 캐릭터 생성 완료 상태
   return (
     <>
       <motion.div
@@ -56,7 +92,7 @@ const PhotoCard = () => {
         className="relative w-full aspect-[3/4] rounded-2xl overflow-hidden border border-white/20 shadow-[0_0_30px_rgba(139,92,246,0.3)]"
         style={{ background: background?.gradient || BACKGROUNDS[0].gradient }}
       >
-        {/* 장착된 뱃지 (좌측 상단) */}
+        {/* 장착된 업적/뱃지 */}
         {badge && (
           <motion.div
             initial={{ scale: 0 }}
@@ -67,7 +103,7 @@ const PhotoCard = () => {
           </motion.div>
         )}
 
-        {/* 레벨 표시 (우측 상단) */}
+        {/* 레벨 */}
         <div className="absolute top-3 right-3 z-10 bg-black/40 backdrop-blur-sm rounded-lg px-2.5 py-1 border border-violet-500/30">
           <span className="text-xs font-bold text-violet-300">Lv.{level}</span>
         </div>
@@ -83,14 +119,17 @@ const PhotoCard = () => {
           </motion.span>
         </div>
 
-        {/* 하단 오버레이 - XP바 + 버튼 */}
+        {/* 하단 */}
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-4 pt-12">
-          {/* XP 바 */}
+          {/* EXP 바 */}
           <div className="mb-3">
             <div className="flex justify-between text-[10px] mb-1">
               <span className="text-white/50">EXP</span>
-              <span className="text-yellow-300 font-semibold">{exp} / {requiredExp}</span>
+              <span className="text-yellow-300 font-semibold">
+                {exp} / {requiredExp}
+              </span>
             </div>
+
             <div className="h-2 bg-black/40 rounded-full overflow-hidden border border-white/10">
               <motion.div
                 className="h-full bg-gradient-to-r from-yellow-400 to-orange-500 rounded-full"
@@ -101,9 +140,8 @@ const PhotoCard = () => {
             </div>
           </div>
 
-          {/* 버튼 영역 */}
+          {/* 버튼 */}
           <div className="flex gap-2">
-            {/* 레벨업 버튼 */}
             <motion.button
               whileTap={canLevelUp ? { scale: 0.95 } : undefined}
               className={`flex-1 py-2 rounded-xl flex items-center justify-center gap-1.5 border text-sm font-semibold ${
@@ -124,7 +162,6 @@ const PhotoCard = () => {
               )}
             </motion.button>
 
-            {/* 업적 버튼 */}
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={() => setShowAchievements(true)}
@@ -137,7 +174,10 @@ const PhotoCard = () => {
         </div>
       </motion.div>
 
-      <AchievementsDialog open={showAchievements} onClose={() => setShowAchievements(false)} />
+      <AchievementsDialog
+        open={showAchievements}
+        onClose={() => setShowAchievements(false)}
+      />
     </>
   );
 };

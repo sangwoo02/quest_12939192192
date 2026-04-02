@@ -40,26 +40,37 @@ const SplashPage = () => {
     return `${y}-${m}-${d}`;
   };
 
-  const runAutoHealthSyncIfNeeded = async (token: string) => {
+  const runAutoHealthSyncIfNeeded = async (token: string, latest: any) => {
     const todayKey = getTodayKey();
     const lastAutoSyncDate = localStorage.getItem(AUTO_HEALTH_SYNC_DATE_KEY);
 
     if (lastAutoSyncDate === todayKey) {
-      return;
+      return latest;
+    }
+
+    const source = String(latest?.inbody?.source || "").toLowerCase();
+
+    // manual / 데이터없음 상태에서는 자동 동기화 금지
+    if (source !== "healthconnect") {
+      return latest;
     }
 
     try {
       await rnRequest("HC_SYNC_AND_SAVE_REQUEST", {
         token,
-        gender: inBodyData?.gender || manualData?.gender || "male",
-        goal: inBodyData?.goal || manualData?.goal || "건강 유지",
+        gender: latest?.inbody?.gender || "male",
+        goal: latest?.inbody?.goal || "건강 유지",
       });
 
       localStorage.setItem(AUTO_HEALTH_SYNC_DATE_KEY, todayKey);
+
+      const refreshedLatest = await rnRequest("HEALTHCARE_LATEST_FAST_REQUEST", { token });
+      return refreshedLatest;
     } catch (e) {
       console.warn("Splash 자동 Health Sync 실패:", e);
+      return latest;
     }
-  };
+  };;
 
   useEffect(() => {
     let mounted = true;
@@ -104,10 +115,12 @@ const SplashPage = () => {
         setProgress(60);
         await wait(250);
 
-        await runAutoHealthSyncIfNeeded(token);
-
         try {
-          const latest = await rnRequest("HEALTHCARE_LATEST_FAST_REQUEST", { token });
+          let latest = await rnRequest("HEALTHCARE_LATEST_FAST_REQUEST", { token });
+
+          // 최신 데이터 확인 후, HealthConnect 연동 사용자만 자동 동기화
+          latest = await runAutoHealthSyncIfNeeded(token, latest);
+
           if (!mounted) return;
           setLoadingText("사용자 상태 복원 중");
           setProgress(85);
@@ -117,11 +130,36 @@ const SplashPage = () => {
 
           if (latest?.inbody) {
             const r = latest.inbody;
+
             if ((r.source || "").toLowerCase() === "healthconnect") {
-              setInBodyData({ id: String(r.id ?? "latest"), userId: String(r.user_id ?? user.id), syncedAt: r.updated_at ? new Date(r.updated_at) : new Date(), name: r.name || user.nickname || "사용자", age: typeof r.age === "number" ? r.age : 25, gender: r.gender || "male", height: Number(r.height || 0), weight: Number(r.weight || 0), body_fat: Number(r.body_fat || 0), muscle_mass: Number(r.muscle_mass || 0), goal: r.goal || "건강 유지", bmi: Number(r.bmi || 0), bmr: Number(r.bmr || 0) } as any);
+              setInBodyData({
+                id: String(r.id ?? "latest"),
+                userId: String(r.user_id ?? user.id),
+                syncedAt: r.updated_at ? new Date(r.updated_at) : new Date(),
+                name: r.name || user.nickname || "사용자",
+                age: typeof r.age === "number" ? r.age : 25,
+                gender: r.gender || "male",
+                height: Number(r.height || 0),
+                weight: Number(r.weight || 0),
+                body_fat: Number(r.body_fat || 0),
+                muscle_mass: Number(r.muscle_mass || 0),
+                goal: r.goal || "건강 유지",
+                bmi: Number(r.bmi || 0),
+                bmr: Number(r.bmr || 0),
+              } as any);
             } else {
-              setManualData({ name: r.name || user.nickname || "사용자", age: typeof r.age === "number" ? r.age : 25, gender: r.gender || "male", height: Number(r.height || 0), weight: Number(r.weight || 0), body_fat: Number(r.body_fat || 0), muscle_mass: Number(r.muscle_mass || 0), goal: r.goal || "건강 유지" });
+              setManualData({
+                name: r.name || user.nickname || "사용자",
+                age: typeof r.age === "number" ? r.age : 25,
+                gender: r.gender || "male",
+                height: Number(r.height || 0),
+                weight: Number(r.weight || 0),
+                body_fat: Number(r.body_fat || 0),
+                muscle_mass: Number(r.muscle_mass || 0),
+                goal: r.goal || "건강 유지",
+              });
             }
+
             setOnboardingComplete(true);
             setLoadingText("메인 화면으로 이동 중");
             setProgress(100);
@@ -136,9 +174,7 @@ const SplashPage = () => {
           await wait(250);
           navigate("/onboarding", { replace: true });
         } catch {
-          // rnRequest 실패 (웹 환경) - 기존 폴백
           if (!mounted) return;
-          // 타이머 기반 이동
           setLoadingText("로그인 화면으로 이동 중");
           setProgress(100);
           await wait(250);

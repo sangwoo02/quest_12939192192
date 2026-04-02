@@ -63,6 +63,7 @@ const OnboardingPage = () => {
         token: token || undefined,
         gender: shGender,
         goal: shGoal,
+        force_history_days: 30,
       });
 
       setSyncSuccess(true);

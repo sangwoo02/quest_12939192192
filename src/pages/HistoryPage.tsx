@@ -319,9 +319,9 @@ const HistoryPage = () => {
                     </p>
                   </div>
                   <div>
-                    <p className="text-foreground font-medium mb-1.5 text-xs">활동 기록 안내 (최초 연동 시 최대 180일까지 반영)</p>
+                    <p className="text-foreground font-medium mb-1.5 text-xs">활동 기록 안내</p>
                     <p className="text-muted-foreground text-[11px] leading-relaxed">
-                      이 그래프는 선택한 주(월요일~일요일)의 활동 기록을 보여줍니다. 상단의 &lt; &gt; 버튼을 통해 히스토리 기록을 확인할 수 있습니다.
+                      이 그래프는 선택한 주(월요일~일요일)의 활동 기록을 보여줍니다. Health Connect가 Health Care앱에 연동된 날부터 기록이 표시되며 상단의 &lt; &gt; 버튼을 통해 히스토리 기록을 확인할 수 있습니다.
                     </p>
                   </div>
                 </div>

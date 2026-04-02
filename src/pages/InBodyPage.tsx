@@ -28,6 +28,75 @@ const calculateAge = (birthDate: string): number => {
   return age;
 };
 
+
+
+const AVERAGE_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7일
+const AVERAGE_CACHE_KEY_PREFIX = 'healthcare_average_cache_v1';
+
+type AverageRange = { min: number; max: number; avg: number };
+
+type CachedAverageData = {
+  savedAt: number;
+  data: {
+    height: AverageRange;
+    weight: AverageRange;
+    body_fat: AverageRange;
+    bmi: AverageRange;
+  };
+};
+
+const getAverageCacheKey = (user?: { id?: string | number; email?: string; username?: string }) => {
+  const accountKey =
+    user?.id?.toString() ||
+    user?.email ||
+    user?.username ||
+    'anonymous';
+
+  return `${AVERAGE_CACHE_KEY_PREFIX}:${accountKey}`;
+};
+
+const readAverageCache = (user?: { id?: string | number; email?: string; username?: string }): CachedAverageData | null => {
+  try {
+    const raw = localStorage.getItem(getAverageCacheKey(user));
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as CachedAverageData;
+
+    if (!parsed || typeof parsed.savedAt !== 'number' || !parsed.data) {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+const writeAverageCache = (
+  user: { id?: string | number; email?: string; username?: string } | undefined,
+  data: {
+    height: AverageRange;
+    weight: AverageRange;
+    body_fat: AverageRange;
+    bmi: AverageRange;
+  }
+) => {
+  try {
+    const payload: CachedAverageData = {
+      savedAt: Date.now(),
+      data,
+    };
+
+    localStorage.setItem(getAverageCacheKey(user), JSON.stringify(payload));
+  } catch {
+    // localStorage 저장 실패 무시
+  }
+};
+
+const isAverageCacheExpired = (savedAt: number) => {
+  return Date.now() - savedAt > AVERAGE_CACHE_TTL;
+};
+
 interface MetricCardProps {
   label: string; value: string | number; unit: string;
   status?: 'good' | 'warning' | 'bad' | 'neutral';
@@ -163,24 +232,30 @@ const WeightGoalCard = ({ currentWeight, height, targetWeight, onSetTarget, disa
   );
 };
 
+const DEFAULT_AVERAGE_DATA = {
+  height: { min: 170, max: 180, avg: 175 },
+  weight: { min: 0, max: 0, avg: 0 },
+  bmi: { min: 0, max: 0, avg: 0 },
+  body_fat: { min: 0, max: 0, avg: 0 },
+  muscle_mass: { min: 28, max: 38, avg: 33 },
+  bmr: { min: 1500, max: 1800, avg: 1650 },
+};
+
 const InBodyPage = () => {
   const navigate = useNavigate();
   const { user, setInBodyData, inBodyData, manualData, setManualData, hasInBodyData, hasInBodySynced, targetWeight, setTargetWeight, hasMissionsGenerated } = useAppStore();
   const { rnRequest } = useRnBridge();
+
+  const userId = user?.id?.toString() || user?.username || 'anonymous';
+  const userNickname = user?.nickname;
+  const userBirthDate = user?.birthDate;
 
   const [activityData, setActivityData] = useState<{ steps?: number; calories?: number } | null>(null);
   const [isFastLoading, setIsFastLoading] = useState(true);
   const [isAverageLoading, setIsAverageLoading] = useState(true);
   const [hasFastData, setHasFastData] = useState(false);
 
-  const [averageData, setAverageData] = useState({
-    height: { min: 170, max: 180, avg: 175 },
-    weight: { min: 0, max: 0, avg: 0 },
-    bmi: { min: 0, max: 0, avg: 0 },
-    body_fat: { min: 0, max: 0, avg: 0 },
-    muscle_mass: { min: 28, max: 38, avg: 33 },
-    bmr: { min: 1500, max: 1800, avg: 1650 },
-  });
+  const [averageData, setAverageData] = useState(DEFAULT_AVERAGE_DATA);
 
   const applyFastData = useCallback((latest: any) => {
     if (latest?.inbody) {
@@ -201,21 +276,45 @@ const InBodyPage = () => {
       setActivityData(null);
     }
     setHasFastData(Boolean(latest?.activity));
-  }, [setInBodyData, setManualData, setTargetWeight, user]);
+  }, [setInBodyData, setManualData, setTargetWeight, userNickname, userBirthDate]);
 
   const applyAverageData = useCallback((avgResponse: any) => {
     const avg = avgResponse?.average;
     if (!avg) return;
-    const range = (x: number, pct = 0.1) => ({ min: +(x * (1 - pct)).toFixed(1), max: +(x * (1 + pct)).toFixed(1), avg: +x.toFixed(1) });
-    const avgHeight = Number(avg.avg_height), avgWeight = Number(avg.avg_weight), avgBodyFat = Number(avg.avg_body_fat), avgBmi = Number(avg.avg_bmi);
+
+    const range = (x: number, pct = 0.1) => ({
+      min: +(x * (1 - pct)).toFixed(1),
+      max: +(x * (1 + pct)).toFixed(1),
+      avg: +x.toFixed(1),
+    });
+
+    const avgHeight = Number(avg.avg_height);
+    const avgWeight = Number(avg.avg_weight);
+    const avgBodyFat = Number(avg.avg_body_fat);
+    const avgBmi = Number(avg.avg_bmi);
+
+    const nextAverageData = {
+      height: Number.isFinite(avgHeight)
+        ? range(avgHeight, 0.03)
+        : DEFAULT_AVERAGE_DATA.height,
+      weight: Number.isFinite(avgWeight)
+        ? range(avgWeight, 0.10)
+        : DEFAULT_AVERAGE_DATA.weight,
+      body_fat: Number.isFinite(avgBodyFat)
+        ? range(avgBodyFat, 0.15)
+        : DEFAULT_AVERAGE_DATA.body_fat,
+      bmi: Number.isFinite(avgBmi)
+        ? range(avgBmi, 0.10)
+        : DEFAULT_AVERAGE_DATA.bmi,
+    };
+
     setAverageData(prev => ({
       ...prev,
-      height: Number.isFinite(avgHeight) ? range(avgHeight, 0.03) : prev.height,
-      weight: Number.isFinite(avgWeight) ? range(avgWeight, 0.10) : prev.weight,
-      body_fat: Number.isFinite(avgBodyFat) ? range(avgBodyFat, 0.15) : prev.body_fat,
-      bmi: Number.isFinite(avgBmi) ? range(avgBmi, 0.10) : prev.bmi,
+      ...nextAverageData,
     }));
-  }, []);
+
+    writeAverageCache({ id: userId }, nextAverageData);
+  }, [userId]);
 
   const saveTargetWeight = useCallback(async (weight: number) => {
     const token = localStorage.getItem("access_token");
@@ -249,15 +348,44 @@ const InBodyPage = () => {
       } catch { /* ignore */ } finally { if (!cancelled) setIsFastLoading(false); }
     };
     const fetchAverage = async () => {
+      const cached = readAverageCache({ id: userId });
+
+      // 1. 캐시가 있으면 바로 표시
+      if (cached?.data && !cancelled) {
+        setAverageData(prev => ({
+          ...prev,
+          ...cached.data,
+        }));
+        setIsAverageLoading(false);
+      }
+
+      // 2. 캐시가 있고 7일 안 지났으면 API 호출 안 함
+      if (cached && !isAverageCacheExpired(cached.savedAt)) {
+        return;
+      }
+
+      // 3. 캐시가 없거나 만료됐으면 다시 호출
       try {
+        if (!cached && !cancelled) {
+          setIsAverageLoading(true);
+        }
+
         const avg = await rnRequest("HEALTHCARE_AVERAGE_REQUEST", { token });
-        if (!cancelled) applyAverageData(avg);
-      } catch { /* ignore */ } finally { if (!cancelled) setIsAverageLoading(false); }
+
+        if (!cancelled) {
+          applyAverageData(avg);
+          setIsAverageLoading(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setIsAverageLoading(false);
+        }
+      }
     };
     fetchFast();
     fetchAverage();
     return () => { cancelled = true; };
-  }, [applyFastData, applyAverageData, rnRequest]);
+  }, [applyFastData, applyAverageData, rnRequest, userId]);
 
   const userData = inBodyData || (manualData ? {
     height: manualData.height ?? 0, weight: manualData.weight ?? 0,
@@ -317,8 +445,8 @@ const InBodyPage = () => {
             </div>
           ) : hasInBodySynced ? (
             <div className="grid grid-cols-2 gap-3">
-              <MetricCard label="걸음 수" value="8,542" unit="걸음" icon={Footprints} delay={0.1} showStatus={false} />
-              <MetricCard label="활동 칼로리" value="320" unit="kcal" icon={Flame} delay={0.15} showStatus={false} />
+              <MetricCard label="걸음 수" value="--" unit="걸음" icon={Footprints} delay={0.1} showStatus={false} />
+              <MetricCard label="활동 칼로리" value="--" unit="kcal" icon={Flame} delay={0.15} showStatus={false} />
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3">

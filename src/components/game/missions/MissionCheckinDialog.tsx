@@ -15,7 +15,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 interface MissionCheckinDialogProps {
-  onComplete: () => void;
+  onComplete: (text: string) => void;
   completed?: boolean;
 }
 const MissionCheckinDialog = ({ onComplete, completed }: MissionCheckinDialogProps) => {
@@ -65,7 +65,7 @@ const MissionCheckinDialog = ({ onComplete, completed }: MissionCheckinDialogPro
               disabled={text.length < 15}
               onClick={() => {
                 setOpen(false);
-                onComplete();
+                onComplete(text);
               }}
               className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-30"
             >

@@ -1,31 +1,140 @@
-/**
- * 🎮 게임 데이터 정의
- * 캐릭터, 배경, 업적 등
- */
+// src/components/game/gameData.ts
 
-export const CHARACTERS = [
-  { id: 'char-default', name: '초보 전사', emoji: '🧑‍💪', price: 0 },
-  { id: 'char-knight', name: '기사', emoji: '🛡️', price: 100 },
-  { id: 'char-mage', name: '마법사', emoji: '🧙', price: 150 },
-  { id: 'char-ninja', name: '닌자', emoji: '🥷', price: 200 },
-  { id: 'char-robot', name: '로봇', emoji: '🤖', price: 250 },
-  { id: 'char-dragon', name: '드래곤', emoji: '🐉', price: 500 },
+export interface CharacterItem {
+  id: string;
+  name: string;
+  emoji: string;
+  price: number;
+  rarity?: 'common' | 'rare' | 'epic' | 'legendary';
+
+  /**
+   * 나중에 픽셀 아트 도입 시 여기만 바꾸면 됨.
+   * 예:
+   * imageSrc?: '/assets/game/characters/char-default.png'
+   */
+  imageSrc?: string;
+}
+
+export interface BackgroundItem {
+  id: string;
+  name: string;
+  gradient: string;
+  price: number;
+  rarity?: 'common' | 'rare' | 'epic' | 'legendary';
+
+  /**
+   * 나중에 픽셀 배경 도입 시 여기만 바꾸면 됨.
+   * 예:
+   * imageSrc?: '/assets/game/backgrounds/bg-default.png'
+   */
+  imageSrc?: string;
+}
+
+export interface AchievementItem {
+  id: string;
+  title: string;
+  description: string;
+  badge: string;
+}
+
+//
+// 중요:
+// 아래 id / price / rarity 는 백엔드 app/services/game_catalog.py 와 맞춰야 함
+//
+
+export const CHARACTERS: CharacterItem[] = [
+  {
+    id: 'char-default',
+    name: '기본 전사',
+    emoji: '🧑‍💪',
+    price: 0,
+    rarity: 'common',
+  },
+  {
+    id: 'char-bunny',
+    name: '토끼 모험가',
+    emoji: '🐰',
+    price: 100,
+    rarity: 'common',
+  },
+  {
+    id: 'char-bear',
+    name: '곰 전사',
+    emoji: '🐻',
+    price: 250,
+    rarity: 'rare',
+  },
+  {
+    id: 'char-cat',
+    name: '고양이 닌자',
+    emoji: '🐱',
+    price: 400,
+    rarity: 'epic',
+  },
+  {
+    id: 'char-dragon',
+    name: '드래곤 기사',
+    emoji: '🐲',
+    price: 700,
+    rarity: 'legendary',
+  },
 ];
 
-export const BACKGROUNDS = [
-  { id: 'bg-default', name: '심우주', gradient: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #1e1b4b 100%)', price: 0 },
-  { id: 'bg-forest', name: '마법의 숲', gradient: 'linear-gradient(135deg, #064e3b 0%, #065f46 50%, #047857 100%)', price: 80 },
-  { id: 'bg-sunset', name: '황혼의 도시', gradient: 'linear-gradient(135deg, #7c2d12 0%, #c2410c 50%, #f59e0b 100%)', price: 120 },
-  { id: 'bg-ocean', name: '깊은 바다', gradient: 'linear-gradient(135deg, #0c4a6e 0%, #0369a1 50%, #06b6d4 100%)', price: 100 },
-  { id: 'bg-lava', name: '용암 동굴', gradient: 'linear-gradient(135deg, #450a0a 0%, #991b1b 50%, #f97316 100%)', price: 200 },
-  { id: 'bg-crystal', name: '크리스탈 궁전', gradient: 'linear-gradient(135deg, #4c1d95 0%, #7c3aed 50%, #c084fc 100%)', price: 180 },
+export const BACKGROUNDS: BackgroundItem[] = [
+  {
+    id: 'bg-default',
+    name: '기본 초원',
+    gradient: 'linear-gradient(180deg, #4f46e5 0%, #7c3aed 45%, #111827 100%)',
+    price: 0,
+    rarity: 'common',
+  },
+  {
+    id: 'bg-sky',
+    name: '하늘 정원',
+    gradient: 'linear-gradient(180deg, #0ea5e9 0%, #22c55e 45%, #0f172a 100%)',
+    price: 150,
+    rarity: 'common',
+  },
+  {
+    id: 'bg-sunset',
+    name: '노을 평원',
+    gradient: 'linear-gradient(180deg, #f97316 0%, #ef4444 45%, #111827 100%)',
+    price: 300,
+    rarity: 'rare',
+  },
+  {
+    id: 'bg-night',
+    name: '별밤 마을',
+    gradient: 'linear-gradient(180deg, #1e1b4b 0%, #312e81 45%, #020617 100%)',
+    price: 500,
+    rarity: 'epic',
+  },
+  {
+    id: 'bg-galaxy',
+    name: '은하 신전',
+    gradient: 'linear-gradient(180deg, #581c87 0%, #7e22ce 45%, #030712 100%)',
+    price: 800,
+    rarity: 'legendary',
+  },
 ];
 
-export const ACHIEVEMENTS = [
-  { id: 'ach-first-mission', name: '첫 발걸음', description: '첫 미션을 완료하세요', badge: '🏅', completed: false },
-  { id: 'ach-streak-3', name: '3일 연속', description: '3일 연속 미션을 완료하세요', badge: '🔥', completed: false },
-  { id: 'ach-level-5', name: '성장의 증거', description: '레벨 5에 도달하세요', badge: '⭐', completed: false },
-  { id: 'ach-all-missions', name: '완벽주의자', description: '하루 미션을 모두 완료하세요', badge: '💎', completed: false },
-  { id: 'ach-coop-first', name: '팀 플레이어', description: '첫 협동전을 완료하세요', badge: '🤝', completed: false },
-  { id: 'ach-pvp-win', name: '승리자', description: '첫 경쟁전에서 승리하세요', badge: '🏆', completed: false },
+export const ACHIEVEMENTS: AchievementItem[] = [
+  {
+    id: 'achv-first',
+    title: '첫 도전',
+    description: '첫 AI 미션 완료',
+    badge: '🥉',
+  },
+  {
+    id: 'achv-streak',
+    title: '꾸준한 기록자',
+    description: '연속 미션 완료',
+    badge: '🥈',
+  },
+  {
+    id: 'achv-master',
+    title: '챌린지 마스터',
+    description: '다수의 미션 완료',
+    badge: '🥇',
+  },
 ];
