@@ -17,37 +17,11 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { User, CurrentMission, GameProfile } from '@/types';
+import type { User, CurrentMission, GameProfile, InBodyData, ManualInputData } from '@/types';
 import { gameApi, healthcareApi, missionsApi } from '@/services/api';
 
 export const AUTO_LOGIN_KEY = 'auto_login_checked';
 
-interface InBodyData {
-  id: string;
-  userId: string;
-  syncedAt: Date;
-  name: string;
-  age: number;
-  gender: string;
-  height: number;
-  weight: number;
-  body_fat: number;
-  muscle_mass: number;
-  goal: string;
-  bmi?: number;
-  bmr?: number;
-}
-
-interface ManualInputData {
-  name: string;
-  age: number;
-  gender: string;
-  height: number;
-  weight: number;
-  body_fat: number;
-  muscle_mass: number;
-  goal: string;
-}
 
 interface WearableDevice {
   name: string;
