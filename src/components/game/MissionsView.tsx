@@ -49,6 +49,7 @@ import MissionCheckinDialog from "./missions/MissionCheckinDialog";
 import { healthcareApi, missionsApi } from "@/services/api";
 import type { CurrentMission, MissionSlotCode } from "@/types";
 import { toast } from "sonner";
+import { useRnBridge } from "@/hooks/useRnBridge";
 
 // ─────────────────────────────────────────────
 // 타입 설정
@@ -166,6 +167,32 @@ const getSortedMissionSlots = (missions: CurrentMission[]) => {
   });
 };
 
+const buildMissingSlotPlaceholder = (
+  slotCode: MissionSlotCode,
+  dailyRemaining: number
+): CurrentMission => {
+  const fallbackType =
+    slotCode === "A"
+      ? "A1_STEP_TARGET"
+      : slotCode === "B"
+      ? "B1_TIMER_STRETCH"
+      : "C1_HEALTH_CHECKIN";
+
+  return {
+    id: -slotCode.charCodeAt(0),
+    slot_code: slotCode,
+    mission_type: fallbackType,
+    title: "",
+    description: "",
+    status: dailyRemaining <= 0 ? "refreshed" : "active",
+    params: {},
+    progress: {},
+    reward_exp: 0,
+    reward_coins: 0,
+    reason: "MISSING_SLOT",
+  };
+};
+
 const MissionsView = () => {
   const navigate = useNavigate();
 
@@ -175,15 +202,22 @@ const MissionsView = () => {
     dailyMissionRegenCount,
     gameProfile,
     refreshGameState,
-    setMissions,
+    enqueueAchievementCelebration,
+    missionInteractionState,
+    setMissionInteractionState,
+    removeMissionInteractionState,
+    pruneMissionInteractionState,
+    missionUiRequest,
+    setMissionUiRequest,
+    clearMissionUiRequest,
   } = useAppStore();
 
   // 서버 최신값 기준으로 다시 계산할 현재 활동 데이터
   const [currentSteps, setCurrentSteps] = useState(0);
   const [currentCalories, setCurrentCalories] = useState(0);
 
-  const [refreshingSlot, setRefreshingSlot] = useState<MissionSlotCode | null>(null);
-  const [submittingSlot, setSubmittingSlot] = useState<MissionSlotCode | null>(null);
+  const refreshingSlot = missionUiRequest.refreshingSlot;
+  const submittingSlot = missionUiRequest.submittingSlot;
 
   const [giveUpTargetSlot, setGiveUpTargetSlot] = useState<MissionSlotCode | null>(null);
   const [completeTargetSlot, setCompleteTargetSlot] = useState<MissionSlotCode | null>(null);
@@ -193,26 +227,65 @@ const MissionsView = () => {
   const [showNoCoinDialog, setShowNoCoinDialog] = useState(false);
 
   const [pendingCoinAction, setPendingCoinAction] = useState<{
-    type: "refresh" | "complete";
+    type: "refresh" | "retry";
     slotCode: MissionSlotCode;
   } | null>(null);
 
-  // B/C 타입의 프론트 상호작용 완료 상태
-  const [interactionState, setInteractionState] = useState<
-    Record<
-      string,
-      {
-        completed: boolean;
-        checkinText?: string;
-      }
-    >
-  >({});
+  const { rnRequest, isRnWebViewAvailable } = useRnBridge();
 
   const dailyRemaining = gameProfile?.daily_free_regen_remaining ?? Math.max(0, 3 - dailyMissionRegenCount);
 
-  const sortedMissions = useMemo(() => getSortedMissionSlots(missions), [missions]);
+  const getCompleteDialogDescription = () => {
+    if (dailyRemaining > 0) {
+      return "성공 처리되면 보상이 지급되고 같은 슬롯에 새 미션이 생성됩니다.";
+    }
 
-  const hasActiveMission = sortedMissions.some((m) => m.status === "in_progress");
+    if (missionCoins > 0) {
+      return '오늘 무료 재생성을 모두 사용했어요. 성공 처리 후 같은 슬롯의 새 미션을 생성하려면 "미션 쿠폰" 1개가 자동으로 사용됩니다.';
+    }
+
+    return '오늘 무료 재생성을 모두 사용했어요. 현재 "미션 쿠폰"이 없어 보상만 지급되고 다음 미션은 생성되지 않습니다.';
+  };
+
+  const getCompleteDialogConfirmLabel = () => {
+    if (dailyRemaining > 0) return "성공 처리";
+    if (missionCoins > 0) return "쿠폰 사용 후 성공 처리";
+    return "보상만 받고 종료";
+  };
+
+  const getCompleteDialogButtonClass = () => {
+    // 무료 재생성 있음 → 기존 초록
+    if (dailyRemaining > 0) {
+      return "bg-emerald-600 hover:bg-emerald-700 text-white";
+    }
+
+    // 무료 없음 + 쿠폰 있음 → cyan (종료 UI랑 동일)
+    if (missionCoins > 0) {
+      return "bg-cyan-600 hover:bg-cyan-700 text-white";
+    }
+
+    // 둘 다 없음 →  주확생 (보상만)
+    return "bg-gradient-to-r from-amber-500 to-orange-500 text-white";
+  };
+
+  const actualMissions = useMemo(() => getSortedMissionSlots(missions), [missions]);
+
+  const sortedMissions = useMemo(() => {
+    const bySlot = new Map<MissionSlotCode, CurrentMission>();
+
+    actualMissions.forEach((mission) => {
+      const slot = mission.slot_code as MissionSlotCode;
+      if (slot === "A" || slot === "B" || slot === "C") {
+        bySlot.set(slot, mission);
+      }
+    });
+
+    return (["A", "B", "C"] as MissionSlotCode[]).map(
+      (slot) => bySlot.get(slot) ?? buildMissingSlotPlaceholder(slot, dailyRemaining)
+    );
+  }, [actualMissions, dailyRemaining]);
+
+  const hasActiveMission = actualMissions.some((m) => m.status === "in_progress");
 
   // ─────────────────────────────────────────────
   // 서버 재조회
@@ -228,20 +301,14 @@ const MissionsView = () => {
       setCurrentCalories(healthResult?.activity?.calories ?? 0);
 
       const nextMissions = gameState?.missions ?? [];
+      const validKeys = nextMissions.map((mission) => `${mission.slot_code}-${mission.id}`);
+      pruneMissionInteractionState(validKeys);
 
-      setInteractionState((prev) => {
-        const next: typeof prev = {};
-        nextMissions.forEach((mission) => {
-          const key = `${mission.slot_code}-${mission.id}`;
-          if (prev[key]) next[key] = prev[key];
-        });
-        return next;
-      });
     } catch (error) {
       console.error('미션 상태 재조회 실패:', error);
       toast.error('미션 상태를 다시 불러오지 못했습니다.');
     }
-  }, [refreshGameState]);
+  }, [refreshGameState, pruneMissionInteractionState]);
 
   useEffect(() => {
     reloadMissionState();
@@ -252,20 +319,50 @@ const MissionsView = () => {
   // ─────────────────────────────────────────────
   const getMissionKey = (mission: CurrentMission) => `${mission.slot_code}-${mission.id}`;
 
-  const markInteractionCompleted = (mission: CurrentMission, payload?: { checkinText?: string }) => {
+  const updateMissionInteractionState = (
+    mission: CurrentMission,
+    patch: Partial<{
+      completed: boolean;
+      checkinText?: string;
+      timerCompleted?: boolean;
+      checkedCount?: number;
+      routineCompleted?: boolean;
+      startedAt?: number;
+      endsAt?: number;
+      uiState?: "idle" | "running" | "waiting" | "ready" | "done";
+      currentRound?: number;
+    }>
+  ) => {
     const key = getMissionKey(mission);
-    setInteractionState((prev) => ({
+    const prev = missionInteractionState[key] || { completed: false };
+
+    setMissionInteractionState(key, {
       ...prev,
-      [key]: {
-        completed: true,
-        checkinText: payload?.checkinText,
-      },
-    }));
+      ...patch,
+    });
+  };
+  const markInteractionCompleted = (
+    mission: CurrentMission,
+    payload?: {
+      checkinText?: string;
+      timerCompleted?: boolean;
+      checkedCount?: number;
+      routineCompleted?: boolean;
+    }
+  ) => {
+    const key = getMissionKey(mission);
+    setMissionInteractionState(key, {
+      completed: true,
+      checkinText: payload?.checkinText,
+      timerCompleted: payload?.timerCompleted,
+      checkedCount: payload?.checkedCount,
+      routineCompleted: payload?.routineCompleted,
+    });
   };
 
   const isInteractionCompleted = (mission: CurrentMission) => {
     const key = getMissionKey(mission);
-    return interactionState[key]?.completed === true;
+    return missionInteractionState[key]?.completed === true;
   };
 
   const getMissionParams = (mission: CurrentMission) => mission.params || {};
@@ -279,7 +376,14 @@ const MissionsView = () => {
     }
 
     if (mission.mission_type === "A2_ACTIVE_KCAL_TARGET") {
-      return currentCalories >= Number(params.target_kcal || 0);
+      const progress = getMissionProgress(mission);
+      const baselineKcal = Number(progress.baseline_kcal ?? 0);
+      const liveDeltaKcal = Math.max(currentCalories - baselineKcal, 0);
+      const storedDeltaKcal = Number(progress.delta_kcal ?? 0);
+      const deltaKcal = Math.max(liveDeltaKcal, storedDeltaKcal);
+      const targetKcal = Number(progress.target_kcal ?? params.target_kcal ?? 0);
+
+      return deltaKcal >= targetKcal;
     }
 
     return isInteractionCompleted(mission);
@@ -287,23 +391,23 @@ const MissionsView = () => {
 
   const getCompletePayload = (mission: CurrentMission) => {
     const key = getMissionKey(mission);
-    const interaction = interactionState[key];
+    const interaction = missionInteractionState[key];
 
     switch (mission.mission_type) {
       case "B1_TIMER_STRETCH":
       case "B2_SLEEP_PREP":
         return {
-          interaction_completed: !!interaction?.completed,
+          timer_completed: !!interaction?.timerCompleted,
         };
 
       case "B3_ROUTINE_CHECK":
         return {
-          interaction_completed: !!interaction?.completed,
+          checked_count: Number(interaction?.checkedCount || 0),
+          routine_completed: !!interaction?.routineCompleted,
         };
 
       case "C1_HEALTH_CHECKIN":
         return {
-          interaction_completed: !!interaction?.completed,
           checkin_text: interaction?.checkinText || "",
         };
 
@@ -312,30 +416,68 @@ const MissionsView = () => {
     }
   };
 
-  const handleAccept = (slotCode: MissionSlotCode) => {
-    setMissions(
-      missions.map((mission) =>
-        mission.slot_code === slotCode
-          ? {
-              ...mission,
-              status: "in_progress",
-            }
-          : mission
-      )
-    );
+  const cancelMissionTimerNotificationIfNeeded = async (mission: CurrentMission | null | undefined) => {
+    if (!mission) return;
+    if (!isRnWebViewAvailable()) return;
+
+    const isTimerMission =
+      mission.mission_type === "B1_TIMER_STRETCH" ||
+      mission.mission_type === "B2_SLEEP_PREP";
+
+    if (!isTimerMission) return;
+
+    try {
+      await rnRequest("MISSION_TIMER_NOTIFICATION_CANCEL_REQUEST", {
+        notificationKey: `mission-timer-${getMissionKey(mission)}`,
+      });
+    } catch (error) {
+      console.warn("타이머 알림 취소 실패:", error);
+    }
+  };
+
+  const handleAccept = async (slotCode: MissionSlotCode) => {
+    try {
+      if (refreshingSlot || submittingSlot) return;
+
+      setMissionUiRequest({
+        refreshingSlot: slotCode,
+        submittingSlot: null,
+        actionType: "start",
+        startedAt: Date.now(),
+      });
+
+      await missionsApi.startSlot({
+        slot_code: slotCode,
+      });
+
+      await reloadMissionState();
+    } catch (error: any) {
+      console.error("미션 시작 실패:", error);
+      toast.error(error?.message || "미션 시작에 실패했습니다.");
+    } finally {
+      clearMissionUiRequest();
+    }
   };
 
   const doRefreshSlot = async (slotCode: MissionSlotCode, useMissionCoinIfNeeded = false) => {
     try {
-      setRefreshingSlot(slotCode);
+
+      const targetMission = sortedMissions.find((m) => m.slot_code === slotCode);
+      await cancelMissionTimerNotificationIfNeeded(targetMission?.status === "in_progress" ? targetMission : null);
+
+      setMissionUiRequest({
+        refreshingSlot: slotCode,
+        submittingSlot: null,
+        actionType: "refresh",
+        startedAt: Date.now(),
+      });
 
       const result = await missionsApi.refreshSlot({
         slot_code: slotCode,
         use_mission_coin_if_needed: useMissionCoinIfNeeded,
       });
 
-      // 백엔드가 coin 필요 상태를 정상 응답으로 줄 수 있음
-      if (!result.ok && result.error_code === "MISSION_COIN_REQUIRED") {
+      if (!result.ok && result.reason === "MISSION_COIN_REQUIRED") {
         setPendingCoinAction({ type: "refresh", slotCode });
         if (missionCoins > 0) {
           setShowUseCoinDialog(true);
@@ -351,13 +493,12 @@ const MissionsView = () => {
       }
 
       toast.success(result.message || "미션이 재생성되었습니다.");
-
       await reloadMissionState();
     } catch (error: any) {
       console.error("미션 재생성 실패:", error);
       toast.error(error?.message || "미션 재생성에 실패했습니다.");
     } finally {
-      setRefreshingSlot(null);
+      clearMissionUiRequest();
     }
   };
 
@@ -397,8 +538,15 @@ const MissionsView = () => {
     const mission = sortedMissions.find((m) => m.slot_code === slotCode);
     if (!mission) return;
 
+    const missionKey = `${mission.slot_code}-${mission.id}`;
+
     try {
-      setSubmittingSlot(slotCode);
+      setMissionUiRequest({
+        refreshingSlot: null,
+        submittingSlot: slotCode,
+        actionType: "complete",
+        startedAt: Date.now(),
+      });
 
       const result = await missionsApi.completeSlot({
         slot_code: slotCode,
@@ -416,14 +564,44 @@ const MissionsView = () => {
         return;
       }
 
-      toast.success(result.message || "미션 완료!");
+      if (result.new_achievements?.length) {
+        enqueueAchievementCelebration(
+          result.new_achievements.map((a) => a.achievement_code)
+        );
+      }
 
+      removeMissionInteractionState(missionKey);
+
+      if (
+        isRnWebViewAvailable() &&
+        (mission.mission_type === "B1_TIMER_STRETCH" ||
+          mission.mission_type === "B2_SLEEP_PREP")
+      ) {
+        try {
+          await rnRequest("MISSION_TIMER_NOTIFICATION_CANCEL_REQUEST", {
+            notificationKey: `mission-timer-${getMissionKey(mission)}`,
+          });
+        } catch (error) {
+          console.warn("타이머 완료 알림 취소 실패:", error);
+        }
+      }
+
+      if (!result.next_mission) {
+        toast.warning(
+          result.message ||
+            "미션 완료와 보상 지급은 성공했지만 다음 미션 생성에 실패했습니다."
+        );
+        await reloadMissionState();
+        return;
+      }
+
+      toast.success(result.message || "미션 완료!");
       await reloadMissionState();
     } catch (error: any) {
       console.error("미션 완료 실패:", error);
       toast.error(error?.message || "미션 완료 처리에 실패했습니다.");
     } finally {
-      setSubmittingSlot(null);
+      clearMissionUiRequest();
       setCompleteTargetSlot(null);
     }
   };
@@ -435,9 +613,93 @@ const MissionsView = () => {
     await doCompleteSlot(slotCode);
   };
 
+  const handleRetryMissingSlot = async (slotCode: MissionSlotCode) => {
+    try {
+      if (refreshingSlot || submittingSlot) return;
+
+      await cancelMissionTimerNotificationIfNeeded(sortedMissions.find((m) => m.slot_code === slotCode));
+
+      setMissionUiRequest({
+        refreshingSlot: slotCode,
+        submittingSlot: null,
+        actionType: "retry",
+        startedAt: Date.now(),
+      });
+
+      const result = await missionsApi.retrySlot({
+        slot_code: slotCode,
+      });
+
+      if (!result.ok) {
+        toast.error(result.message || "빈 슬롯 미션 재생성에 실패했습니다.");
+        return;
+      }
+
+      toast.success(result.message || "빈 슬롯 미션을 다시 생성했습니다.");
+      await reloadMissionState();
+    } catch (error: any) {
+      console.error("빈 슬롯 재생성 실패:", error);
+      toast.error(error?.message || "빈 슬롯 미션 재생성에 실패했습니다.");
+    } finally {
+      clearMissionUiRequest();
+    }
+  };
+
+  const doRetrySlotWithCoin = async (slotCode: MissionSlotCode) => {
+    try {
+      await cancelMissionTimerNotificationIfNeeded(sortedMissions.find((m) => m.slot_code === slotCode));
+
+      setMissionUiRequest({
+        refreshingSlot: slotCode,
+        submittingSlot: null,
+        actionType: "retry",
+        startedAt: Date.now(),
+      });
+
+      const result = await missionsApi.retrySlot({
+        slot_code: slotCode,
+        use_mission_coin_if_needed: true,
+      });
+
+      if (!result.ok && result.reason === "MISSION_COIN_REQUIRED") {
+        setPendingCoinAction({ type: "retry", slotCode });
+        setShowUseCoinDialog(false);
+
+        if (missionCoins > 0) {
+          setShowUseCoinDialog(true);
+        } else {
+          setShowNoCoinDialog(true);
+        }
+        return;
+      }
+
+      if (!result.ok) {
+        if (result.reason === "RETRY_GENERATION_FAILED") {
+          toast.error(
+            result.message || "새 미션 생성에 실패했습니다. 사용한 쿠폰은 복구되었습니다."
+          );
+          await reloadMissionState();
+          return;
+        }
+
+        toast.error(result.message || "빈 슬롯 미션 재생성에 실패했습니다.");
+        return;
+      }
+
+      toast.success(result.message || "미션 쿠폰을 사용해 새 미션을 생성했습니다.");
+      await reloadMissionState();
+    } catch (error: any) {
+      console.error("미션 쿠폰 빈 슬롯 재생성 실패:", error);
+      toast.error(error?.message || "빈 슬롯 미션 재생성에 실패했습니다.");
+    } finally {
+      clearMissionUiRequest();
+    }
+  };
+
+
   const handleInlineUseCoin = (slotCode: MissionSlotCode) => {
     setPendingCoinAction({
-      type: "refresh",
+      type: "retry",
       slotCode,
     });
 
@@ -460,11 +722,15 @@ const MissionsView = () => {
 
   const handleCoinUseYes = async () => {
     if (!pendingCoinAction) return;
+    if (refreshingSlot || submittingSlot) return;
 
     setShowUseCoinDialog(false);
 
-    // 실제 코인 차감/슬롯 재생성은 refresh-slot API가 처리
-    await doRefreshSlot(pendingCoinAction.slotCode, true);
+    if (pendingCoinAction.type === "retry") {
+      await doRetrySlotWithCoin(pendingCoinAction.slotCode);
+    } else {
+      await doRefreshSlot(pendingCoinAction.slotCode, true);
+    }
 
     setPendingCoinAction(null);
   };
@@ -501,15 +767,28 @@ const MissionsView = () => {
       }
 
       case "A2_ACTIVE_KCAL_TARGET": {
-        const target = Number(params.target_kcal || 0);
-        const pct = target > 0 ? Math.min(100, (currentCalories / target) * 100) : 0;
+        const progress = getMissionProgress(mission);
+        const baselineKcal = Number(progress.baseline_kcal ?? 0);
+        const currentKcal = Math.max(Number(progress.current_kcal ?? 0), currentCalories);
+        const liveDeltaKcal = Math.max(currentCalories - baselineKcal, 0);
+        const storedDeltaKcal = Number(progress.delta_kcal ?? 0);
+        const deltaKcal = Math.max(liveDeltaKcal, storedDeltaKcal);
+        const target = Number(progress.target_kcal ?? params.target_kcal ?? 0);
+        const pct = target > 0 ? Math.min(100, (deltaKcal / target) * 100) : 0;
 
         return (
           <div className="mt-2">
             <div className="flex items-center justify-between text-[10px] mb-1">
-              <span className="text-orange-300 font-mono">{currentCalories.toLocaleString()}kcal</span>
+              <span className="text-orange-300 font-mono">
+                +{deltaKcal.toLocaleString()}kcal
+              </span>
               <span className="text-white/40">{target.toLocaleString()}kcal</span>
             </div>
+
+            <div className="text-[10px] text-white/35 mb-1">
+              현재 누적 {currentKcal.toLocaleString()}kcal · 기준 {baselineKcal.toLocaleString()}kcal
+            </div>
+
             <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
               <motion.div
                 className="h-full bg-gradient-to-r from-orange-500 to-yellow-500 rounded-full"
@@ -522,48 +801,131 @@ const MissionsView = () => {
         );
       }
 
-      case "B1_TIMER_STRETCH":
+      case "B1_TIMER_STRETCH": {
+        const key = getMissionKey(mission);
+        const interaction = missionInteractionState[key];
+
         return (
           <div className="mt-2">
             <MissionTimerWidget
               minutes={Number(params.duration_min || 5)}
               label="스트레칭"
-              onComplete={() => markInteractionCompleted(mission)}
+              completed={isInteractionCompleted(mission)}
+              startedAt={interaction?.startedAt}
+              endsAt={interaction?.endsAt}
+              uiState={(interaction?.uiState as "idle" | "running" | "done") ?? "idle"}
+              notificationKey={`mission-timer-${getMissionKey(mission)}`}
+              onStart={({ startedAt, endsAt, uiState }) =>
+                updateMissionInteractionState(mission, {
+                  startedAt,
+                  endsAt,
+                  uiState,
+                  completed: false,
+                  timerCompleted: false,
+                })
+              }
+              onComplete={() =>
+                updateMissionInteractionState(mission, {
+                  completed: true,
+                  timerCompleted: true,
+                  uiState: "done",
+                })
+              }
             />
           </div>
         );
+      }
 
-      case "B2_SLEEP_PREP":
+      case "B2_SLEEP_PREP": {
+        const key = getMissionKey(mission);
+        const interaction = missionInteractionState[key];
+
         return (
           <div className="mt-2">
             <MissionTimerWidget
               minutes={Number(params.duration_min || 5)}
               label="휴식"
-              onComplete={() => markInteractionCompleted(mission)}
+              completed={isInteractionCompleted(mission)}
+              startedAt={interaction?.startedAt}
+              endsAt={interaction?.endsAt}
+              uiState={(interaction?.uiState as "idle" | "running" | "done") ?? "idle"}
+              notificationKey={`mission-timer-${getMissionKey(mission)}`}
+              onStart={({ startedAt, endsAt, uiState }) =>
+                updateMissionInteractionState(mission, {
+                  startedAt,
+                  endsAt,
+                  uiState,
+                  completed: false,
+                  timerCompleted: false,
+                })
+              }
+              onComplete={() =>
+                updateMissionInteractionState(mission, {
+                  completed: true,
+                  timerCompleted: true,
+                  uiState: "done",
+                })
+              }
             />
           </div>
         );
+      }
 
-      case "B3_ROUTINE_CHECK":
+      case "B3_ROUTINE_CHECK": {
+        const key = getMissionKey(mission);
+        const interaction = missionInteractionState[key];
+
         return (
           <div className="mt-2">
             <MissionRoutineWidget
-              totalRounds={Number(params.total_count || 3)}
+              totalRounds={Number(params.repeat_count || 3)}
               intervalMinutes={Number(params.interval_min || 10)}
-              onComplete={() => markInteractionCompleted(mission)}
-            />
-          </div>
-        );
-
-      case "C1_HEALTH_CHECKIN":
-        return (
-          <div className="mt-2">
-            <MissionCheckinDialog
               completed={isInteractionCompleted(mission)}
-              onComplete={(text) => markInteractionCompleted(mission, { checkinText: text })}
+              startedAt={interaction?.startedAt}
+              endsAt={interaction?.endsAt}
+              currentRound={interaction?.currentRound ?? 0}
+              uiState={
+                (interaction?.uiState as "idle" | "waiting" | "ready" | "done") ?? "idle"
+              }
+              onStateChange={(payload) =>
+                updateMissionInteractionState(mission, {
+                  startedAt: payload.startedAt,
+                  endsAt: payload.endsAt,
+                  currentRound: payload.currentRound,
+                  checkedCount: payload.checkedCount,
+                  uiState: payload.uiState,
+                  completed: false,
+                  routineCompleted: false,
+                })
+              }
+              onComplete={(payload) =>
+                updateMissionInteractionState(mission, {
+                  completed: true,
+                  checkedCount: payload.checkedCount,
+                  routineCompleted: payload.routineCompleted,
+                  currentRound: payload.checkedCount,
+                  uiState: "done",
+                  startedAt: undefined,
+                  endsAt: undefined,
+                })
+              }
             />
           </div>
         );
+      }
+
+        case "C1_HEALTH_CHECKIN":
+          return (
+            <div className="mt-2">
+              <MissionCheckinDialog
+                completed={isInteractionCompleted(mission)}
+                minLength={mission.params?.min_length ?? 15}
+                onComplete={(text) =>
+                  markInteractionCompleted(mission, { checkinText: text })
+                }
+              />
+            </div>
+          );
 
       default:
         return null;
@@ -599,12 +961,26 @@ const MissionsView = () => {
         {/* 헤더 */}
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <Target className="w-5 h-5 text-yellow-400" />
+            <svg width="0" height="0" className="absolute">
+              <defs>
+                <linearGradient id="targetGradientHeader" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor="#fde68a" />
+                  <stop offset="50%" stopColor="#facc15" />
+                  <stop offset="100%" stopColor="#f59e0b" />
+                </linearGradient>
+              </defs>
+            </svg>
+
+            <Target
+              className="w-5 h-5 drop-shadow-[0_0_6px_rgba(250,204,21,0.35)]"
+              stroke="url(#targetGradientHeader)"
+            />
+
             <h2 className="text-lg font-bold text-white">오늘의 미션</h2>
           </div>
 
           <span className="text-xs text-white/50 bg-white/10 px-2.5 py-1 rounded-full border border-white/10">
-            재생성 {dailyRemaining}/3
+            하루 무료 재생성 {dailyRemaining}/3
           </span>
         </div>
 
@@ -632,10 +1008,49 @@ const MissionsView = () => {
           const isSubmitting = submittingSlot === slotCode;
           const isDisabledByActive = hasActiveMission && mission.status === "active";
           const canComplete = mission.status === "in_progress" && canCompleteMission(mission);
+          const isMissingSlot = mission.reason === "MISSING_SLOT" && mission.id < 0;
 
+
+          if (isMissingSlot && dailyRemaining > 0) {
+            return (
+              <motion.div
+                key={`missing-${slotCode}-${index}`}
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: index * 0.08 }}
+                className="relative rounded-2xl p-5 border backdrop-blur-sm bg-amber-500/5 border-amber-400/20"
+              >
+                <div className="flex flex-col items-center text-center gap-3">
+                  <div className="w-12 h-12 rounded-xl bg-amber-500/15 border border-amber-400/20 flex items-center justify-center">
+                    <AlertTriangle className="w-6 h-6 text-amber-300" />
+                  </div>
+
+                  <div>
+                    <p className="text-sm font-bold text-white">
+                      {typeConfig.label} 슬롯 미션을 불러오지 못했습니다
+                    </p>
+                    <p className="text-xs text-white/40 mt-1">
+                      완료 후 다음 미션 생성이 실패했거나
+                      <br />
+                      일시적인 네트워크 문제가 발생했을 수 있습니다.
+                    </p>
+                  </div>
+
+                  <motion.button
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => handleRetryMissingSlot(slotCode)}
+                    className="w-full flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white text-xs font-semibold border border-white/20 shadow-[0_0_15px_rgba(245,158,11,0.3)]"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    다시 생성하기
+                  </motion.button>
+                </div>
+              </motion.div>
+            );
+          }
           // 종료 UI: 무료 재생성이 없고, 이 슬롯이 더 이상 자동 재생성 없이 비어 있거나 막힌 경우용
           // 지금 current에 ended 슬롯이 따로 안 올 수 있어서, 실제 ended UI는 최소화해서 유지
-          if (status === "ended") {
+          if (isMissingSlot && dailyRemaining <= 0) {
             return (
               <motion.div
                 key={`${mission.id}-${slotCode}-${index}`}
@@ -654,18 +1069,23 @@ const MissionsView = () => {
                     <p className="text-xs text-white/40 mt-1">
                       추가 미션을 진행하고 싶으면
                       <br />
-                      <span className="text-cyan-400 font-semibold">미션 코인</span>을 사용하세요
+                      <span className="text-cyan-400 font-semibold">미션 쿠폰</span>을 사용하세요
                     </p>
                   </div>
 
                   <div className="flex flex-col gap-2 w-full">
                     <motion.button
-                      whileTap={{ scale: 0.95 }}
-                      onClick={() => handleInlineUseCoin(slotCode)}
-                      className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 text-white text-xs font-semibold border border-white/20 shadow-[0_0_15px_rgba(6,182,212,0.3)]"
+                      whileTap={!refreshingSlot && !submittingSlot ? { scale: 0.95 } : undefined}
+                      disabled={!!refreshingSlot || !!submittingSlot}
+                      onClick={() => !refreshingSlot && !submittingSlot && handleInlineUseCoin(slotCode)}
+                      className={`flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold border ${
+                        refreshingSlot || submittingSlot
+                          ? "bg-white/5 text-white/25 border-white/10 cursor-not-allowed"
+                          : "bg-gradient-to-r from-cyan-600 to-blue-600 text-white border-white/20 shadow-[0_0_15px_rgba(6,182,212,0.3)]"
+                      }`}
                     >
                       <Ticket className="w-3.5 h-3.5" />
-                      미션 코인 사용
+                      미션 쿠폰 사용
                     </motion.button>
 
                     <motion.button
@@ -711,7 +1131,11 @@ const MissionsView = () => {
                         <RefreshCw className="w-5 h-5" />
                       </motion.div>
                       <span className="text-sm font-medium">
-                        {isRefreshing ? "미션 재생성 중..." : "미션 처리 중..."}
+                        {missionUiRequest.actionType === "start"
+                          ? "미션 시작 중..."
+                          : isRefreshing
+                          ? "미션 재생성 중..."
+                          : "미션 처리 중..."}
                       </span>
                     </div>
                   </motion.div>
@@ -760,10 +1184,10 @@ const MissionsView = () => {
 
                   {/* 보상 */}
                   <div className="flex items-center gap-2 mt-2">
-                    <div className="text-[10px] text-yellow-300 bg-yellow-500/10 border border-yellow-500/20 px-2 py-1 rounded-full">
+                    <div className="text-[10px] text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-2 py-1 rounded-full">
                       EXP +{mission.reward_exp}
                     </div>
-                    <div className="text-[10px] text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-2 py-1 rounded-full">
+                    <div className="text-[10px] text-yellow-300 bg-yellow-500/10 border border-yellow-500/20 px-2 py-1 rounded-full">
                       코인 +{mission.reward_coins}
                     </div>
                   </div>
@@ -819,6 +1243,7 @@ const MissionsView = () => {
                           <Flag className="w-3.5 h-3.5" />
                           미션 성공
                         </motion.button>
+                        
 
                         <motion.button
                           whileTap={{ scale: 0.95 }}
@@ -877,7 +1302,7 @@ const MissionsView = () => {
           <AlertDialogHeader>
             <AlertDialogTitle className="text-white">미션을 완료 처리할까요?</AlertDialogTitle>
             <AlertDialogDescription className="text-white/60">
-              성공 처리되면 보상이 지급되고 같은 슬롯에 새 미션이 생성될 수 있습니다.
+              {getCompleteDialogDescription()}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -889,9 +1314,9 @@ const MissionsView = () => {
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={handleCompleteConfirm}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              className={getCompleteDialogButtonClass()}
             >
-              완료하기
+              {getCompleteDialogConfirmLabel()}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -903,7 +1328,7 @@ const MissionsView = () => {
           <AlertDialogHeader>
             <AlertDialogTitle className="text-white">오늘 무료 재생성을 모두 사용했어요</AlertDialogTitle>
             <AlertDialogDescription className="text-white/60">
-              추가 미션을 진행하려면 미션 코인을 사용해야 합니다.
+              추가 미션을 진행하려면 미션 쿠폰을 사용해야 합니다.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -914,17 +1339,17 @@ const MissionsView = () => {
               onClick={handleUseCoinConfirm}
               className="bg-cyan-600 hover:bg-cyan-700 text-white"
             >
-              미션 코인 사용
+              미션 쿠폰 사용
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* 미션 코인 사용 확인 */}
+      {/* 미션 쿠폰 사용 확인 */}
       <AlertDialog open={showUseCoinDialog} onOpenChange={setShowUseCoinDialog}>
         <AlertDialogContent className="bg-slate-900 border-white/10">
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-white">미션 코인을 사용할까요?</AlertDialogTitle>
+            <AlertDialogTitle className="text-white">미션 쿠폰을 사용할까요?</AlertDialogTitle>
             <AlertDialogDescription className="text-white/60">
               코인 1개를 사용해서 해당 슬롯의 미션을 다시 생성합니다.
             </AlertDialogDescription>
@@ -935,7 +1360,8 @@ const MissionsView = () => {
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={handleCoinUseYes}
-              className="bg-cyan-600 hover:bg-cyan-700 text-white"
+              disabled={!!refreshingSlot || !!submittingSlot}
+              className="bg-cyan-600 hover:bg-cyan-700 text-white disabled:opacity-50"
             >
               예
             </AlertDialogAction>
@@ -947,9 +1373,9 @@ const MissionsView = () => {
       <AlertDialog open={showNoCoinDialog} onOpenChange={setShowNoCoinDialog}>
         <AlertDialogContent className="bg-slate-900 border-white/10">
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-white">미션 코인이 부족합니다</AlertDialogTitle>
+            <AlertDialogTitle className="text-white">미션 쿠폰이 부족합니다</AlertDialogTitle>
             <AlertDialogDescription className="text-white/60">
-              미션 코인을 구매하려면 결제 페이지로 이동해주세요.
+              미션 쿠폰을 구매하려면 결제 페이지로 이동해주세요.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

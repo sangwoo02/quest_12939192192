@@ -1,6 +1,6 @@
 /**
  * 🌉 React Native WebView 브릿지 훅
- * 
+ *
  * RN WebView 환경에서 네이티브 앱과 통신하기 위한 공유 유틸리티입니다.
  * 각 페이지에서 중복되는 rnRequest/message handler 패턴을 하나로 통합합니다.
  */
@@ -9,6 +9,10 @@ import { useRef, useEffect, useCallback } from 'react';
 
 export const useRnBridge = () => {
   const pendingRef = useRef(new Map<string, (msg: any) => void>());
+
+  const isRnWebViewAvailable = useCallback(() => {
+    return !!(window as any).ReactNativeWebView?.postMessage;
+  }, []);
 
   const rnRequest = useCallback((type: string, payload: any): Promise<any> => {
     const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -19,18 +23,26 @@ export const useRnBridge = () => {
         else reject(new Error(msg.error || 'Unknown error'));
       });
 
-      // RN WebView 환경이면 RN으로 전달
-      if ((window as any).ReactNativeWebView?.postMessage) {
+      if (isRnWebViewAvailable()) {
         (window as any).ReactNativeWebView.postMessage(
           JSON.stringify({ type, requestId, payload })
         );
         return;
       }
 
-      // Web 브라우저 단독 실행 시 실패 처리
       reject(new Error('ReactNativeWebView 연결이 없습니다. (앱(WebView)에서 실행해야 합니다)'));
     });
-  }, []);
+  }, [isRnWebViewAvailable]);
+
+  const rnEmit = useCallback((type: string, payload: any) => {
+    if (!isRnWebViewAvailable()) return false;
+
+    (window as any).ReactNativeWebView.postMessage(
+      JSON.stringify({ type, payload })
+    );
+
+    return true;
+  }, [isRnWebViewAvailable]);
 
   // RN(WebView) -> React 메시지 수신 핸들러
   useEffect(() => {
@@ -60,7 +72,7 @@ export const useRnBridge = () => {
     };
   }, []);
 
-  return { rnRequest };
+  return { rnRequest, rnEmit, isRnWebViewAvailable };
 };
 
 /**

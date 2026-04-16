@@ -27,7 +27,14 @@ export interface User {
 export interface SignupRequest {
   username: string;
   password: string;
-  nickname: string;
+
+  // ✅ 실명/프로필명
+  name?: string | null;
+
+  // ✅ 구버전 호환용
+  nickname?: string | null;
+
+  birth_date?: string;
 }
 
 export interface LoginRequest {
@@ -38,9 +45,18 @@ export interface LoginRequest {
 export interface LoginResponse {
   access_token: string;
   token_type: string;
-  user: User;
+  user_id: number;
+  nickname: string | null;
+  birth_date: string | null;
+  exp: number;
 }
 
+//0409수정
+export interface OwnedCharacter {
+  id: string;
+  level: number;
+  exp: number;
+}
 // ============================================
 // 기존 프론트 호환용 InBody / ManualInput 타입
 // ============================================
@@ -148,6 +164,19 @@ export interface AppState {
     gps: boolean;
     notifications: boolean;
   };
+}
+
+export interface WeeklyRankingItem {
+  rank: number;
+  nickname: string;
+  steps: number;
+}
+
+export interface SeasonRankingItem {
+  rank: number;
+  nickname: string;
+  score: number;
+  tier: string;
 }
 
 // ============================================
@@ -258,8 +287,19 @@ export interface EquippedAchievement {
   description: string | null;
 }
 
+export interface AchievementRecord {
+  achievement_code: string;
+  title: string;
+  description: string | null;
+  is_equipped: boolean;
+  acquired_at: string | null;
+}
+
+
 export interface GameProfile {
   user_id: number;
+  nickname: string | null;
+  game_nickname: string | null;
   level: number;
   current_exp: number;
   total_exp: number;
@@ -272,15 +312,72 @@ export interface GameProfile {
   daily_free_regen_remaining: number;
   daily_regen_date: string | null;
   active_missions_count: number;
-  owned_character_ids: string[];
+  //0409수정
+  owned_characters: OwnedCharacter[];
+  //
   owned_background_ids: string[];
   equipped_achievement: EquippedAchievement | null;
+  completed_achievement_codes: string[];
+  equipped_achievement_codes: string[];
+  achievements: AchievementRecord[];
+  total_missions_completed: number;
+  total_coins_earned: number;
+  total_purchases: number;
+  next_level_required_exp: number;
+  can_level_up: boolean;
+  character_stage: string;
+  max_level: number;
+}
+
+export interface UpdateGameNicknameRequest {
+  // 한글/영문 2~5자
+  game_nickname: string;
+  consume_coins?: boolean;
+}
+
+export interface UpdateGameNicknameResponse {
+  ok: boolean;
+  message: string;
+  charged_coins: number;
+  remaining_coins: number;
+  profile: GameProfile;
+  new_achievements?: AchievementRecord[];
+}
+
+export interface GetAchievementsResponse {
+  ok: boolean;
+  achievements: AchievementRecord[];
+  completed_achievement_codes: string[];
+  equipped_achievement_codes: string[];
+}
+
+export interface EquipAchievementsRequest {
+  achievement_codes: string[];
+}
+
+export interface EquipAchievementsResponse {
+  ok: boolean;
+  message: string;
+  equipped_achievement_codes: string[];
+  profile: GameProfile;
 }
 
 export interface GameProfileResponse {
   ok: boolean;
   game_initialized: boolean;
   profile: GameProfile | null;
+}
+
+export interface LevelUpResponse {
+  ok: boolean;
+  message: string;
+  before_level: number;
+  after_level: number;
+  before_exp: number;
+  remaining_exp: number;
+  used_exp: number;
+  profile: GameProfile;
+  new_achievements?: AchievementRecord[];
 }
 
 export interface InitializeCharacterRequest {
@@ -292,6 +389,26 @@ export interface InitializeCharacterResponse {
   ok: boolean;
   message: string;
   profile: GameProfile;
+}
+
+export interface PurchaseCharacterResponse {
+  ok: boolean;
+  message: string;
+  purchased_character_id: string;
+  selected_character_id: string | null;
+  remaining_coins: number;
+  profile: GameProfile;
+  new_achievements?: AchievementRecord[];
+}
+
+export interface PurchaseBackgroundResponse {
+  ok: boolean;
+  message: string;
+  purchased_background_id: string;
+  selected_background_id: string | null;
+  remaining_coins: number;
+  profile: GameProfile;
+  new_achievements?: AchievementRecord[];
 }
 
 export interface UseMissionCoinResponse {
@@ -325,6 +442,53 @@ export interface EquipBackgroundRequest {
   background_id: string;
 }
 
+
+export interface WeekWalkRankingItem {
+  rank: number;
+  nickname: string;
+  steps?: number;
+  score?: number;
+  tier?: string;
+  change?: number;
+}
+
+export interface WeekWalkOverviewResponse {
+  ok: boolean;
+  weekly_season: {
+    season_id: number;
+    start_at: string;
+    end_at: string;
+  };
+  score_season: {
+    season_id: number;
+    start_at: string;
+    end_at: string;
+  };
+  weekly_ranking: WeeklyRankingItem[];
+  score_ranking: SeasonRankingItem[];
+  my_weekly: {
+    joined: boolean;
+    rank: number | null;
+    steps: number;
+  };
+  my_score: {
+    rank: number | null;
+    score: number;
+    tier: string;
+  };
+  my_game_nickname: string | null;
+  total_game_profile_users: number;
+  new_achievement_codes?: string[];
+}
+
+export interface WeekWalkJoinResponse {
+  ok: boolean;
+  message: string;
+  joined: boolean;
+  weekly_season_id?: number;
+  score_season_id?: number;
+  new_achievement_codes?: string[];
+}
 
 // ============================================
 // 최신 백엔드용 Mission 타입
@@ -396,8 +560,37 @@ export interface RefreshSlotResponse {
   mission_coins: number;
   previous_mission_id?: number;
   mission?: CurrentMission;
-  error_code?: 'MISSION_COIN_REQUIRED';
+  reason?: 'MISSION_COIN_REQUIRED';
 }
+
+export interface StartSlotRequest {
+  slot_code: MissionSlotCode;
+}
+
+export interface RetrySlotRequest {
+  slot_code: MissionSlotCode;
+  use_mission_coin_if_needed?: boolean;
+}
+
+export interface RetrySlotResponse {
+  ok: boolean;
+  message: string;
+  slot_code: MissionSlotCode;
+  cost_type?: 'free_regen' | 'mission_coin';
+  daily_free_regen_remaining?: number;
+  mission_coins?: number;
+  mission?: CurrentMission;
+  reason?: 'MISSION_COIN_REQUIRED' | 'RETRY_GENERATION_FAILED';
+}
+
+
+export interface StartSlotResponse {
+  ok: boolean;
+  message: string;
+  slot_code: MissionSlotCode;
+  mission: CurrentMission;
+}
+
 
 export interface CompleteSlotRequest {
   slot_code: MissionSlotCode;
@@ -416,9 +609,18 @@ export interface CompleteSlotResponse {
   message: string;
   slot_code: MissionSlotCode;
   mission?: CurrentMission;
-  regenerated_mission?: CurrentMission | null;
+  completed_mission?: CurrentMission;
+  next_mission?: CurrentMission | null;
   evaluation?: MissionEvaluationResult;
   game_profile?: GameProfile;
+  new_achievements?: AchievementRecord[];
+  profile?: {
+    level: number;
+    current_exp: number;
+    total_exp: number;
+    coins: number;
+    mission_coins: number;
+  };
 }
 
 // ============================================

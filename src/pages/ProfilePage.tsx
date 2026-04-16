@@ -31,7 +31,17 @@ const calculateAge = (birthDate: string): number => {
 
 const ProfilePage = () => {
   const navigate = useNavigate();
-  const { user, logout, deleteAccount, inBodyData, setInBodyData, hasInBodyData, hasInBodySynced, hasMissionsGenerated, resetUserData } = useAppStore();
+  const {
+    user,
+    logout,
+    deleteAccount,
+    inBodyData,
+    setInBodyData,
+    hasInBodyData,
+    hasInBodySynced,
+    hasMissionsGenerated,
+    resetHealthcareLinkedData,
+  } = useAppStore();
   const { rnRequest } = useRnBridge();
   const userAge = user?.birthDate ? calculateAge(user.birthDate) : null;
 
@@ -189,7 +199,7 @@ const ProfilePage = () => {
 
       await rnRequest("HEALTHCARE_UNLINK_REQUEST", { token });
 
-      resetUserData();
+      resetHealthcareLinkedData();
       setActiveModal(null);
       toast.success("Samsung Health 연동이 해제되고 데이터가 삭제되었습니다.");
       navigate("/onboarding");
@@ -282,7 +292,7 @@ const ProfilePage = () => {
       <AnimatePresence>{activeModal === 'deleteAccount' && (<motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-foreground/50 z-50 flex items-center justify-center px-6" onClick={() => setActiveModal(null)}><motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} onClick={e => e.stopPropagation()} className="w-full max-w-sm bg-card rounded-2xl p-6"><div className="flex items-center justify-center w-16 h-16 mx-auto mb-4 rounded-full bg-destructive/10"><AlertTriangle className="w-8 h-8 text-destructive" /></div><h2 className="text-xl font-bold text-foreground text-center mb-2">회원탈퇴</h2><p className="text-muted-foreground text-sm text-center mb-6">탈퇴 시 모든 데이터가 삭제되며 복구할 수 없습니다.<br />계속하시려면 아래에 <span className="font-bold text-destructive">'회원탈퇴'</span>를 입력해주세요.</p><div className="space-y-4"><Input type="text" value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)} placeholder="회원탈퇴" className="h-12 rounded-xl text-center" /><div className="flex gap-3"><Button variant="outline" onClick={() => { setActiveModal(null); setDeleteConfirmText(''); }} className="flex-1 h-12 rounded-xl">취소</Button><Button onClick={handleDeleteAccount} disabled={isLoading || deleteConfirmText !== '회원탈퇴'} className="flex-1 h-12 rounded-xl bg-destructive hover:bg-destructive/90 text-destructive-foreground">{isLoading ? '처리 중...' : '탈퇴하기'}</Button></div></div></motion.div></motion.div>)}</AnimatePresence>
 
       {/* Unlink Samsung Health Modal */}
-      <AnimatePresence>{activeModal === 'unlinkSamsung' && (<motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-foreground/50 z-50 flex items-center justify-center px-6" onClick={() => setActiveModal(null)}><motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} onClick={e => e.stopPropagation()} className="w-full max-w-sm bg-card rounded-2xl p-6"><div className="flex items-center justify-center w-16 h-16 mx-auto mb-4 rounded-full bg-warning/10"><Unlink className="w-8 h-8 text-warning" /></div><h2 className="text-xl font-bold text-foreground text-center mb-2">연동 해제</h2><p className="text-muted-foreground text-sm text-center mb-6">Samsung Health 연동을 해제하면 모든 신체 데이터와 AI 미션이 삭제됩니다.<br /><br />계속하시겠습니까?</p><div className="flex gap-3"><Button variant="outline" onClick={() => setActiveModal(null)} className="flex-1 h-12 rounded-xl">취소</Button><Button onClick={handleUnlinkSamsung} disabled={isLoading} className="flex-1 h-12 rounded-xl bg-warning hover:bg-warning/90 text-warning-foreground">{isLoading ? '처리 중...' : '연동 해제'}</Button></div></motion.div></motion.div>)}</AnimatePresence>
+      <AnimatePresence>{activeModal === 'unlinkSamsung' && (<motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-foreground/50 z-50 flex items-center justify-center px-6" onClick={() => setActiveModal(null)}><motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} onClick={e => e.stopPropagation()} className="w-full max-w-sm bg-card rounded-2xl p-6"><div className="flex items-center justify-center w-16 h-16 mx-auto mb-4 rounded-full bg-warning/10"><Unlink className="w-8 h-8 text-warning" /></div><h2 className="text-xl font-bold text-foreground text-center mb-2">연동 해제</h2><p className="text-muted-foreground text-sm text-center mb-6">Samsung Health 연동을 해제하면 모든 신체 데이터와 AI 미션이 삭제됩니다. 게임 데이터는 유지됩니다.<br /><br />계속하시겠습니까?</p><div className="flex gap-3"><Button variant="outline" onClick={() => setActiveModal(null)} className="flex-1 h-12 rounded-xl">취소</Button><Button onClick={handleUnlinkSamsung} disabled={isLoading} className="flex-1 h-12 rounded-xl bg-warning hover:bg-warning/90 text-warning-foreground">{isLoading ? '처리 중...' : '연동 해제'}</Button></div></motion.div></motion.div>)}</AnimatePresence>
     </AppLayout>
   );
 };

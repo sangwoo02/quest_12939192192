@@ -21,6 +21,8 @@ import { z } from 'zod';
 import Logo from "@/assets/logo.png";
 
 type AuthMode = 'login' | 'signup';
+type ForgotStep = 'email' | 'reset';
+
 
 const emailSchema = z.string().trim()
   .min(1, { message: '이메일을 입력해주세요' })
@@ -65,13 +67,23 @@ const AuthPage = () => {
   const [showAuthPanel, setShowAuthPanel] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
+  const [fullName, setFullName] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [birthDate, setBirthDate] = useState('');
   const [errors, setErrors] = useState<FormErrors>({});
   const [termsAgreed, setTermsAgreed] = useState(false);
   const [showTermsDialog, setShowTermsDialog] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotStep, setForgotStep] = useState<ForgotStep>('email');
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotEmailError, setForgotEmailError] = useState('');
+  const [forgotNewPassword, setForgotNewPassword] = useState('');
+  const [forgotConfirmPassword, setForgotConfirmPassword] = useState('');
+  const [forgotPasswordErrors, setForgotPasswordErrors] = useState<{ newPassword?: string; confirmPassword?: string }>({});
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [showForgotNewPassword, setShowForgotNewPassword] = useState(false);
+
 
   // 이메일 중복 체크 캐시 (백엔드용)
   const [emailCheckCache, setEmailCheckCache] = useState<{ email: string; exists: boolean } | null>(null);
@@ -118,7 +130,7 @@ const AuthPage = () => {
     if (!passwordResult.success) newErrors.password = passwordResult.error.errors[0].message;
     
     if (mode === 'signup') {
-      const nameResult = nameSchema.safeParse(name);
+      const nameResult = nameSchema.safeParse(fullName);
       if (!nameResult.success) newErrors.name = nameResult.error.errors[0].message;
       if (!birthDate) newErrors.birthDate = '생년월일을 입력해주세요';
       else if (!isOldEnough(birthDate)) newErrors.birthDate = '만 14세 이상만 가입할 수 있습니다';
@@ -187,6 +199,7 @@ const AuthPage = () => {
       }
 
       localStorage.setItem("access_token", accessToken);
+      localStorage.setItem("auth_token", accessToken);
       localStorage.setItem("token_type", data?.token_type || "bearer");
       localStorage.setItem(AUTO_LOGIN_KEY, rememberMe ? "true" : "false");
 
@@ -311,7 +324,7 @@ const AuthPage = () => {
       await rnRequest("AUTH_SIGNUP_REQUEST", {
         username: email,
         password,
-        nickname: name,
+        name: fullName,
         birth_date: birthDate,
       });
 
@@ -319,7 +332,7 @@ const AuthPage = () => {
 
       setMode("login");
       setPassword("");
-      setName("");
+      setFullName('');
       setConfirmPassword("");
       setBirthDate("");
       setErrors({});
@@ -337,6 +350,59 @@ const AuthPage = () => {
   const clearError = (field: keyof FormErrors) => {
     setErrors(prev => ({ ...prev, [field]: undefined }));
   };
+
+  const handleForgotEmailCheck = async () => {
+    setForgotEmailError('');
+    const emailResult = emailSchema.safeParse(forgotEmail);
+    if (!emailResult.success) {
+      setForgotEmailError(emailResult.error.errors[0].message);
+      return;
+    }
+    setForgotLoading(true);
+    try {
+      const data = await rnRequest("AUTH_CHECK_EMAIL_REQUEST", { username: forgotEmail });
+      if (data?.exists) {
+        setForgotStep('reset');
+        setForgotEmailError('');
+      } else {
+        setForgotEmailError('아이디가 존재하지 않습니다');
+      }
+    } catch {
+      setForgotEmailError('확인 중 오류가 발생했습니다. 다시 시도해주세요.');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+  const handleForgotPasswordSubmit = async () => {
+    const newErrors: { newPassword?: string; confirmPassword?: string } = {};
+    const pwResult = passwordSchema.safeParse(forgotNewPassword);
+    if (!pwResult.success) newErrors.newPassword = pwResult.error.errors[0].message;
+    if (forgotNewPassword !== forgotConfirmPassword) newErrors.confirmPassword = '비밀번호가 일치하지 않습니다';
+    setForgotPasswordErrors(newErrors);
+    if (Object.keys(newErrors).length > 0) return;
+    setForgotLoading(true);
+    try {
+      await rnRequest("AUTH_RESET_PASSWORD_REQUEST", { username: forgotEmail, new_password: forgotNewPassword });
+      toast.success('비밀번호가 재설정되었습니다. 로그인해주세요.');
+      closeForgotPassword();
+    } catch (e: any) {
+      toast.error(e?.message ? String(e.message) : '비밀번호 재설정에 실패했습니다.');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+  const closeForgotPassword = () => {
+    setShowForgotPassword(false);
+    setForgotStep('email');
+    setForgotEmail('');
+    setForgotEmailError('');
+    setForgotNewPassword('');
+    setForgotConfirmPassword('');
+    setForgotPasswordErrors({});
+    setShowForgotNewPassword(false);
+  };
+
+
 
   const ErrorMessage = ({ message }: { message?: string }) => {
     if (!message) return null;
@@ -404,12 +470,12 @@ const AuthPage = () => {
                   {!showPermissions ? (
                     <motion.div key={`auth-form-${mode}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
                       <div className="text-center mb-6">
-                        <h2 className="text-2xl font-bold text-foreground">{mode === 'login' ? '다시 만나서 반가워요!' : '함께 시작해볼까요?'}</h2>
+                        <h2 className="text-2xl font-bold text-foreground">{mode === 'login' ? '만나서 반가워요!' : '함께 시작해볼까요?'}</h2>
                         <p className="text-muted-foreground mt-1 text-sm">{mode === 'login' ? '계정에 로그인하세요' : '새 계정을 만들어보세요'}</p>
                       </div>
                       <div className="flex bg-secondary rounded-xl p-1 mb-6">
-                        <button className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all ${mode === 'login' ? 'bg-card text-foreground card-shadow' : 'text-muted-foreground'}`} onClick={() => { if (mode !== 'login') { setMode('login'); setEmail(''); setPassword(''); setName(''); setConfirmPassword(''); setBirthDate(''); setErrors({}); } }}>로그인</button>
-                        <button className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all ${mode === 'signup' ? 'bg-card text-foreground card-shadow' : 'text-muted-foreground'}`} onClick={() => { if (mode !== 'signup') { setMode('signup'); setEmail(''); setPassword(''); setName(''); setConfirmPassword(''); setBirthDate(''); setErrors({}); } }}>회원가입</button>
+                        <button className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all ${mode === 'login' ? 'bg-card text-foreground card-shadow' : 'text-muted-foreground'}`} onClick={() => { if (mode !== 'login') { setMode('login'); setEmail(''); setPassword(''); setFullName(''); setConfirmPassword(''); setBirthDate(''); setErrors({}); } }}>로그인</button>
+                        <button className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all ${mode === 'signup' ? 'bg-card text-foreground card-shadow' : 'text-muted-foreground'}`} onClick={() => { if (mode !== 'signup') { setMode('signup'); setEmail(''); setPassword(''); setFullName(''); setConfirmPassword(''); setBirthDate(''); setErrors({}); } }}>회원가입</button>
                       </div>
                       <form onSubmit={handleSubmit} className="space-y-4">
                         {mode === 'signup' && (
@@ -418,7 +484,7 @@ const AuthPage = () => {
                               <Label htmlFor="name" className="text-sm text-muted-foreground">이름</Label>
                               <div className="relative">
                                 <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
-                                <Input id="name" type="text" placeholder="이름을 입력하세요" value={name} onChange={(e) => { setName(e.target.value); clearError('name'); }} className={`pl-12 h-14 rounded-xl border-border bg-secondary/50 focus:bg-card transition-colors ${errors.name ? 'border-destructive focus-visible:ring-destructive' : ''}`} />
+                                <Input id="name" type="text" placeholder="이름을 입력하세요" value={fullName} onChange={(e) => { setFullName(e.target.value); clearError('name'); }} className={`pl-12 h-14 rounded-xl border-border bg-secondary/50 focus:bg-card transition-colors ${errors.name ? 'border-destructive focus-visible:ring-destructive' : ''}`} />
                               </div>
                               <ErrorMessage message={errors.name} />
                             </div>
@@ -469,7 +535,17 @@ const AuthPage = () => {
                               <Checkbox id="remember" checked={rememberMe} onCheckedChange={(checked) => setRememberMe(checked as boolean)} />
                               <Label htmlFor="remember" className="text-sm text-muted-foreground cursor-pointer">자동로그인</Label>
                             </div>
-                            <button type="button" className="text-sm text-primary hover:underline">비밀번호 찾기</button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setForgotEmail(email);
+                                setForgotEmailError('');
+                                setShowForgotPassword(true);
+                              }}
+                              className="text-sm text-primary hover:underline"
+                            >
+                              비밀번호 찾기
+                            </button>
                           </div>
                         )}
                         <Button type="submit" disabled={isLoading} className="w-full h-14 rounded-xl text-base font-semibold gradient-primary text-primary-foreground hover:opacity-90 transition-opacity mt-2">
@@ -539,6 +615,92 @@ const AuthPage = () => {
           <div className="px-6 pb-6 pt-2">
             <Button onClick={() => { setTermsAgreed(true); setShowTermsDialog(false); }} className="w-full h-12 rounded-xl font-semibold gradient-primary text-primary-foreground">동의합니다</Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 비밀번호 찾기 팝업 */}
+      <Dialog open={showForgotPassword} onOpenChange={() => {}}>
+        <DialogContent className="max-w-[90%] rounded-2xl p-0 [&>button]:hidden" onPointerDownOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
+          <AnimatePresence mode="wait">
+            {forgotStep === 'email' ? (
+              <motion.div key="forgot-email" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-6 space-y-5">
+                <div className="text-center">
+                  <h2 className="text-xl font-bold text-foreground">비밀번호 찾기</h2>
+                  <p className="text-sm text-muted-foreground mt-1">가입한 이메일(아이디)을 입력해주세요</p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="forgot-email" className="text-sm text-muted-foreground">이메일</Label>
+                  <div className="relative">
+                    <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                    <Input
+                      id="forgot-email"
+                      type="email"
+                      placeholder="example@email.com"
+                      value={forgotEmail}
+                      onChange={(e) => { setForgotEmail(e.target.value); setForgotEmailError(''); }}
+                      className={`pl-12 h-14 rounded-xl border-border bg-secondary/50 focus:bg-card transition-colors ${forgotEmailError ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+                    />
+                  </div>
+                  <ErrorMessage message={forgotEmailError} />
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <Button type="button" variant="outline" onClick={closeForgotPassword} className="flex-1 h-12 rounded-xl font-semibold">취소</Button>
+                  <Button type="button" onClick={handleForgotEmailCheck} disabled={forgotLoading} className="flex-1 h-12 rounded-xl font-semibold gradient-primary text-primary-foreground">
+                    {forgotLoading ? <div className="w-5 h-5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" /> : '다음'}
+                  </Button>
+                </div>
+              </motion.div>
+            ) : (
+              <motion.div key="forgot-reset" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="p-6 space-y-5">
+                <div className="text-center">
+                  <h2 className="text-xl font-bold text-foreground">비밀번호 재설정</h2>
+                  <p className="text-sm text-muted-foreground mt-1">새로운 비밀번호를 입력해주세요</p>
+                </div>
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="forgot-new-password" className="text-sm text-muted-foreground">새 비밀번호</Label>
+                    <div className="relative">
+                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                      <Input
+                        id="forgot-new-password"
+                        type={showForgotNewPassword ? 'text' : 'password'}
+                        placeholder="새 비밀번호 (6자 이상)"
+                        value={forgotNewPassword}
+                        onChange={(e) => { setForgotNewPassword(e.target.value); setForgotPasswordErrors(prev => ({ ...prev, newPassword: undefined })); }}
+                        className={`pl-12 pr-12 h-14 rounded-xl border-border bg-secondary/50 focus:bg-card transition-colors ${forgotPasswordErrors.newPassword ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+                      />
+                      <button type="button" onClick={() => setShowForgotNewPassword(!showForgotNewPassword)} className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
+                        {showForgotNewPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                      </button>
+                    </div>
+                    <ErrorMessage message={forgotPasswordErrors.newPassword} />
+                    {!forgotPasswordErrors.newPassword && <p className="text-xs text-muted-foreground">6자 이상 입력해주세요</p>}
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="forgot-confirm-password" className="text-sm text-muted-foreground">비밀번호 확인</Label>
+                    <div className="relative">
+                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                      <Input
+                        id="forgot-confirm-password"
+                        type="password"
+                        placeholder="비밀번호를 다시 입력하세요"
+                        value={forgotConfirmPassword}
+                        onChange={(e) => { setForgotConfirmPassword(e.target.value); setForgotPasswordErrors(prev => ({ ...prev, confirmPassword: undefined })); }}
+                        className={`pl-12 h-14 rounded-xl border-border bg-secondary/50 focus:bg-card transition-colors ${forgotPasswordErrors.confirmPassword ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+                      />
+                    </div>
+                    <ErrorMessage message={forgotPasswordErrors.confirmPassword} />
+                  </div>
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <Button type="button" variant="outline" onClick={closeForgotPassword} className="flex-1 h-12 rounded-xl font-semibold">취소</Button>
+                  <Button type="button" onClick={handleForgotPasswordSubmit} disabled={forgotLoading} className="flex-1 h-12 rounded-xl font-semibold gradient-primary text-primary-foreground">
+                    {forgotLoading ? <div className="w-5 h-5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" /> : '완료'}
+                  </Button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </DialogContent>
       </Dialog>
     </div>

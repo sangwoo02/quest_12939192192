@@ -1,18 +1,24 @@
 // src/services/api.ts
-
+import type { AchievementRecord } from '@/types';
 import type {
   ApiErrorResponse,
   CheckUserDataResponse,
   CompleteSlotRequest,
   CompleteSlotResponse,
+  CurrentMission,
+  EquipBackgroundRequest,
+  EquipCharacterRequest,
   GameProfileResponse,
   GenerateInitialMissionsRequest,
   GenerateInitialMissionsResponse,
   InitializeCharacterRequest,
   InitializeCharacterResponse,
   LatestHealthcareResponse,
+  LevelUpResponse,
   LoginRequest,
   LoginResponse,
+  PurchaseBackgroundRequest,
+  PurchaseCharacterRequest,
   RefreshSlotRequest,
   RefreshSlotResponse,
   ResetDailyRegenResponse,
@@ -21,18 +27,24 @@ import type {
   SyncHistoryRequest,
   UnlinkHealthcareResponse,
   UseMissionCoinResponse,
-  CurrentMission,
-
-  // ✅ 추가
-  PurchaseCharacterRequest,
-  PurchaseBackgroundRequest,
-  EquipCharacterRequest,
-  EquipBackgroundRequest,
+  StartSlotRequest,
+  StartSlotResponse,
+  UpdateGameNicknameRequest,
+  UpdateGameNicknameResponse,
+  GetAchievementsResponse,
+  EquipAchievementsRequest,
+  EquipAchievementsResponse,
+  RetrySlotRequest,
+  RetrySlotResponse,
+  PurchaseCharacterResponse,
+  PurchaseBackgroundResponse,
+  WeekWalkOverviewResponse,
+  WeekWalkJoinResponse,
 } from '@/types';
 
 // 백엔드 주소
 const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+  import.meta.env.VITE_API_BASE_URL || 'http://192.168.0.4:8000';
 
 // --------------------------------------------
 // 토큰 관련
@@ -40,7 +52,10 @@ const API_BASE_URL =
 const AUTH_TOKEN_KEY = 'auth_token';
 
 export const getAuthToken = (): string | null => {
-  return localStorage.getItem(AUTH_TOKEN_KEY);
+  return (
+    localStorage.getItem(AUTH_TOKEN_KEY) ||
+    localStorage.getItem('access_token')
+  );
 };
 
 export const setAuthToken = (token: string): void => {
@@ -107,7 +122,9 @@ const requestJson = async <T>(
 // Auth API
 // --------------------------------------------
 export const authApi = {
-  signup: async (data: SignupRequest): Promise<{ message?: string; user_id?: number }> => {
+  signup: async (
+    data: SignupRequest
+  ): Promise<{ message?: string; user_id?: number }> => {
     return requestJson('/auth/signup', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -128,12 +145,18 @@ export const authApi = {
   },
 
   updateProfile: async (nickname: string): Promise<{ message?: string }> => {
-    return requestJson(`/auth/update-profile?nickname=${encodeURIComponent(nickname)}`, {
-      method: 'PATCH',
-    });
+    return requestJson(
+      `/auth/update-profile?nickname=${encodeURIComponent(nickname)}`,
+      {
+        method: 'PATCH',
+      }
+    );
   },
 
-  changePassword: async (currentPassword: string, newPassword: string): Promise<{ message?: string }> => {
+  changePassword: async (
+    currentPassword: string,
+    newPassword: string
+  ): Promise<{ message?: string }> => {
     return requestJson('/auth/change-password', {
       method: 'PATCH',
       body: JSON.stringify({
@@ -192,7 +215,9 @@ export const healthcareApi = {
     });
   },
 
-  updateTargetWeight: async (targetWeight: number): Promise<{ ok: boolean; target_weight: number; inbody_id: number }> => {
+  updateTargetWeight: async (
+    targetWeight: number
+  ): Promise<{ ok: boolean; target_weight: number; inbody_id: number }> => {
     return requestJson('/healthcare/target-weight', {
       method: 'PATCH',
       body: JSON.stringify({
@@ -223,6 +248,21 @@ export const missionsApi = {
       method: 'GET',
     });
   },
+
+  startSlot: async (data: StartSlotRequest): Promise<StartSlotResponse> => {
+    return requestJson('/missions/start-slot', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  retrySlot: async (data: RetrySlotRequest): Promise<RetrySlotResponse> => {
+    return requestJson('/missions/retry-slot', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
 
   generateInitial: async (
     data: GenerateInitialMissionsRequest = { force_regenerate: false }
@@ -258,6 +298,30 @@ export const gameApi = {
     });
   },
 
+  getAchievements: async (): Promise<GetAchievementsResponse> => {
+    return requestJson('/game/achievements', {
+      method: 'GET',
+    });
+  },
+
+  equipAchievements: async (
+    data: EquipAchievementsRequest
+  ): Promise<EquipAchievementsResponse> => {
+    return requestJson('/game/equip-achievements', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  updateGameNickname: async (
+    data: UpdateGameNicknameRequest
+  ): Promise<UpdateGameNicknameResponse> => {
+    return requestJson('/game/update-game-nickname', {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+
   initializeCharacter: async (
     data: InitializeCharacterRequest
   ): Promise<InitializeCharacterResponse> => {
@@ -267,40 +331,32 @@ export const gameApi = {
     });
   },
 
-  // ✅ 추가: 캐릭터 구매
   purchaseCharacter: async (
     data: PurchaseCharacterRequest
-  ): Promise<any> => {
+  ): Promise<PurchaseCharacterResponse> => {
     return requestJson('/game/purchase-character', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   },
 
-  // ✅ 추가: 배경 구매
   purchaseBackground: async (
     data: PurchaseBackgroundRequest
-  ): Promise<any> => {
+  ): Promise<PurchaseBackgroundResponse> => {
     return requestJson('/game/purchase-background', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   },
 
-  // ✅ 추가: 캐릭터 장착
-  equipCharacter: async (
-    data: EquipCharacterRequest
-  ): Promise<any> => {
+  equipCharacter: async (data: EquipCharacterRequest): Promise<any> => {
     return requestJson('/game/equip-character', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   },
 
-  // ✅ 추가: 배경 장착
-  equipBackground: async (
-    data: EquipBackgroundRequest
-  ): Promise<any> => {
+  equipBackground: async (data: EquipBackgroundRequest): Promise<any> => {
     return requestJson('/game/equip-background', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -313,12 +369,66 @@ export const gameApi = {
     });
   },
 
+  purchaseMissionCoins: async (
+    data: PurchaseMissionCoinsRequest
+  ): Promise<PurchaseMissionCoinsResponse> => {
+    return requestJson('/game/purchase-mission-coins', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  checkGameNicknameAvailability: async (payload: { game_nickname: string }) => {
+    return requestJson<{
+      available: boolean;
+      message?: string;
+    }>('/game/check-game-nickname', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
   resetDailyRegenIfNeeded: async (): Promise<ResetDailyRegenResponse> => {
     return requestJson('/game/reset-daily-regen-if-needed', {
       method: 'POST',
     });
   },
+
+  levelUp: async (): Promise<LevelUpResponse> => {
+    return requestJson('/game/level-up', {
+      method: 'POST',
+    });
+  },
 };
+
+export const weekWalkApi = {
+  getOverview: async (): Promise<WeekWalkOverviewResponse> => {
+    return requestJson('/week-walk/overview', {
+      method: 'GET',
+    });
+  },
+
+  join: async (): Promise<WeekWalkJoinResponse> => {
+    return requestJson('/week-walk/join', {
+      method: 'POST',
+    });
+  },
+};
+
+export interface PurchaseMissionCoinsRequest {
+  package_id: string;
+}
+
+export interface PurchaseMissionCoinsResponse {
+  ok: boolean;
+  message: string;
+  package_id: string;
+  purchased_amount: number;
+  mission_coins: number;
+  profile: GameProfileResponse['profile'];
+  new_achievements?: AchievementRecord[];
+}
+
 
 // --------------------------------------------
 // System API

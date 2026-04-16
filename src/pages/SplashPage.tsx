@@ -85,6 +85,10 @@ const SplashPage = () => {
         const autoLoginEnabled = localStorage.getItem(AUTO_LOGIN_KEY) === "true";
         const token = localStorage.getItem("access_token");
 
+        if (token) {
+          localStorage.setItem("auth_token", token);
+        }
+
         if (!autoLoginEnabled) {
           localStorage.removeItem("access_token");
           localStorage.removeItem("token_type");

@@ -1,93 +1,186 @@
 /**
- * 🎭 캐릭터 & 배경 선택 다이얼로그 - 서버 연동 버전
+ * 🏷️ 닉네임 설정 다이얼로그
  *
- * 이번 단계 목표
- * - 최초 캐릭터/배경 선택을 서버에 저장
- * - 저장 성공 후 store refreshGameState()로 게임 상태 전체 갱신
- * - 이미 생성된 상태면 다시 초기 생성 API를 막음
+ * - 최초 진입 시 닉네임 설정
+ * - 닉네임 변경권 사용 시 닉네임 변경
+ * - 닉네임은 한글/영문 2~5자
+ * - 생성하기 버튼 클릭 시 확인 팝업 전에 서버 중복 검사
+ * - 중복 닉네임이면 입력창 아래 에러 표시
+ * - 한글 조합(IME) 입력 깨짐 방지
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import type { ChangeEvent, CompositionEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, AlertTriangle, Check } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { gameApi } from '@/services/api';
-import { CHARACTERS, BACKGROUNDS } from './gameData';
 import { toast } from 'sonner';
 
 interface CharacterSelectDialogProps {
   open: boolean;
   onClose: () => void;
+  /** 닉네임 변경 모드 (상점에서 변경권 사용 시) */
+  isRename?: boolean;
 }
 
-const CharacterSelectDialog = ({ open, onClose }: CharacterSelectDialogProps) => {
+const GAME_NICKNAME_REGEX = /^[A-Za-z가-힣]{2,5}$/;
+
+const sanitizeNickname = (value: string) => {
+  return value.replace(/[^A-Za-z가-힣]/g, '').slice(0, 5);
+};
+
+const CharacterSelectDialog = ({
+  open,
+  onClose,
+  isRename = false,
+}: CharacterSelectDialogProps) => {
   const {
     hasCreatedCharacter,
     refreshGameState,
+    nickname,
+    enqueueAchievementCelebration,
   } = useAppStore();
 
-  const freeCharacters = useMemo(
-    () => CHARACTERS.filter((c) => c.price === 0),
-    []
-  );
-
-  const freeBackgrounds = useMemo(
-    () => BACKGROUNDS.filter((b) => b.price === 0),
-    []
-  );
-
-  const [selectedChar, setSelectedChar] = useState(freeCharacters[0]?.id ?? 'char-default');
-  const [selectedBg, setSelectedBg] = useState(freeBackgrounds[0]?.id ?? 'bg-default');
+  const [inputValue, setInputValue] = useState('');
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [checkingDuplicate, setCheckingDuplicate] = useState(false);
+  const [isComposing, setIsComposing] = useState(false);
+  const [fieldError, setFieldError] = useState('');
 
-  const currentChar = useMemo(
-    () => CHARACTERS.find((c) => c.id === selectedChar) ?? CHARACTERS[0],
-    [selectedChar]
+  const trimmedValue = useMemo(() => inputValue.trim(), [inputValue]);
+  const sanitizedLength = useMemo(
+    () => sanitizeNickname(inputValue).trim().length,
+    [inputValue]
   );
-
-  const currentBg = useMemo(
-    () => BACKGROUNDS.find((b) => b.id === selectedBg) ?? BACKGROUNDS[0],
-    [selectedBg]
+  const isValid = useMemo(
+    () => GAME_NICKNAME_REGEX.test(trimmedValue),
+    [trimmedValue]
   );
 
   useEffect(() => {
     if (!open) return;
 
-    setSelectedChar(freeCharacters[0]?.id ?? 'char-default');
-    setSelectedBg(freeBackgrounds[0]?.id ?? 'bg-default');
+    setInputValue(isRename && nickname ? nickname : '');
     setShowConfirm(false);
     setSubmitting(false);
-  }, [open, freeCharacters, freeBackgrounds]);
+    setCheckingDuplicate(false);
+    setIsComposing(false);
+    setFieldError('');
+  }, [open, isRename, nickname]);
+
+  const handleCreate = async () => {
+    const sanitized = sanitizeNickname(inputValue).trim();
+
+    setInputValue(sanitized);
+    setFieldError('');
+
+    if (!GAME_NICKNAME_REGEX.test(sanitized)) {
+      setFieldError('게임 닉네임은 한글/영문 2~5글자로 입력해주세요.');
+      return;
+    }
+
+    try {
+      setCheckingDuplicate(true);
+
+      const result = await gameApi.checkGameNicknameAvailability({
+        game_nickname: sanitized,
+      });
+
+      if (!result.available) {
+        setFieldError(result.message || '중복된 닉네임입니다.');
+        return;
+      }
+
+      setShowConfirm(true);
+    } catch (error: any) {
+      console.error('닉네임 중복 확인 실패:', error);
+
+      const message = error?.message || '닉네임 중복 확인에 실패했습니다.';
+
+      if (
+        message.includes('중복된 닉네임') ||
+        message.includes('이미 사용 중') ||
+        message.includes('2글자') ||
+        message.includes('5글자') ||
+        message.includes('한글') ||
+        message.includes('영문')
+      ) {
+        setFieldError(message);
+        return;
+      }
+
+      toast.error(message);
+    } finally {
+      setCheckingDuplicate(false);
+    }
+  };
 
   const handleConfirm = async () => {
     if (submitting) return;
 
-    // 이미 생성되어 있으면 중복 초기 생성을 막음
-    if (hasCreatedCharacter) {
-      toast.warning('이미 캐릭터가 생성되어 있습니다.');
+    const sanitized = sanitizeNickname(inputValue).trim();
+
+    if (!GAME_NICKNAME_REGEX.test(sanitized)) {
+      setFieldError('게임 닉네임은 한글/영문 2~5글자로 입력해주세요.');
       setShowConfirm(false);
-      onClose();
       return;
     }
 
     try {
       setSubmitting(true);
+      setFieldError('');
 
-      await gameApi.initializeCharacter({
-        character_id: selectedChar,
-        background_id: selectedBg,
+      if (!isRename && !hasCreatedCharacter) {
+        await gameApi.initializeCharacter({
+          character_id: 'char-default',
+          background_id: 'bg-default',
+        });
+      }
+
+      const result = await gameApi.updateGameNickname({
+        game_nickname: sanitized,
+        consume_coins: isRename,
       });
+
+      if (result?.new_achievements?.length) {
+        enqueueAchievementCelebration(
+          result.new_achievements.map((a) => a.achievement_code)
+        );
+      }
 
       await refreshGameState();
 
-      toast.success('캐릭터가 생성되었습니다!');
+      toast.success(
+        isRename
+          ? `게임 닉네임이 변경되었습니다!${
+              result.charged_coins > 0 ? ` (-${result.charged_coins}코인)` : ''
+            }`
+          : '게임 닉네임이 설정되었습니다!'
+      );
 
       setShowConfirm(false);
       onClose();
     } catch (error: any) {
-      console.error('캐릭터 초기 생성 실패:', error);
-      toast.error(error?.message || '캐릭터 생성에 실패했습니다.');
+      console.error('닉네임 설정 실패:', error);
+
+      const message = error?.message || '닉네임 설정에 실패했습니다.';
+
+      if (
+        message.includes('중복된 닉네임') ||
+        message.includes('이미 사용 중') ||
+        message.includes('2글자') ||
+        message.includes('5글자') ||
+        message.includes('한글') ||
+        message.includes('영문')
+      ) {
+        setFieldError(message);
+        setShowConfirm(false);
+        return;
+      }
+
+      toast.error(message);
     } finally {
       setSubmitting(false);
     }
@@ -103,11 +196,10 @@ const CharacterSelectDialog = ({ open, onClose }: CharacterSelectDialogProps) =>
         exit={{ opacity: 0 }}
         className="fixed inset-0 z-50 flex items-center justify-center p-4"
       >
-        {/* Backdrop */}
         <div
           className="absolute inset-0 bg-black/70 backdrop-blur-sm"
           onClick={() => {
-            if (!submitting) onClose();
+            if (!submitting && !checkingDuplicate) onClose();
           }}
         />
 
@@ -115,102 +207,93 @@ const CharacterSelectDialog = ({ open, onClose }: CharacterSelectDialogProps) =>
           initial={{ scale: 0.9, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           exit={{ scale: 0.9, opacity: 0 }}
-          className="relative w-full max-w-[380px] max-h-[85vh] overflow-y-auto bg-slate-900 rounded-2xl border border-violet-500/30 shadow-[0_0_40px_rgba(139,92,246,0.3)]"
+          className="relative w-full max-w-[340px] bg-slate-900 rounded-2xl border border-violet-500/30 shadow-[0_0_40px_rgba(139,92,246,0.3)]"
         >
-          {/* 헤더 */}
-          <div className="sticky top-0 bg-slate-900/95 backdrop-blur-sm p-4 border-b border-white/10 flex items-center justify-between z-10">
-            <h2 className="text-lg font-bold text-white">캐릭터 생성</h2>
+          <div className="p-4 border-b border-white/10 flex items-center justify-between">
+            <h2 className="text-lg font-bold text-white">
+              {isRename ? '닉네임 변경' : '닉네임 설정'}
+            </h2>
+
             <button
               onClick={onClose}
-              disabled={submitting}
+              disabled={submitting || checkingDuplicate}
               className="p-1 rounded-lg hover:bg-white/10 disabled:opacity-50"
             >
               <X className="w-5 h-5 text-white/60" />
             </button>
           </div>
 
-          <div className="p-4 space-y-5">
-            {/* 미리보기 */}
-            <div
-              className="relative h-40 rounded-xl overflow-hidden border border-white/20 flex items-center justify-center"
-              style={{ background: currentBg.gradient }}
-            >
-              <motion.span
-                key={selectedChar}
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                className="text-7xl"
-              >
-                {currentChar.emoji}
-              </motion.span>
-            </div>
-
-            {/* 캐릭터 선택 */}
+          <div className="p-5 space-y-4">
             <div>
-              <h3 className="text-sm font-semibold text-white/80 mb-2">캐릭터 선택</h3>
-              <div className="grid grid-cols-3 gap-2">
-                {freeCharacters.map((char) => (
-                  <motion.button
-                    key={char.id}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => setSelectedChar(char.id)}
-                    disabled={submitting}
-                    className={`rounded-xl p-3 text-center border transition-all ${
-                      selectedChar === char.id
-                        ? 'bg-violet-500/30 border-violet-400/50 ring-1 ring-violet-400/30'
-                        : 'bg-white/5 border-white/10 hover:bg-white/10'
-                    } disabled:opacity-60`}
-                  >
-                    <span className="text-2xl">{char.emoji}</span>
-                    <p className="text-[10px] text-white/60 mt-1">{char.name}</p>
-                  </motion.button>
-                ))}
-              </div>
+              <label className="text-xs text-white/50 mb-1.5 block">
+                닉네임 (한글/영문 2~5자)
+              </label>
+
+              <input
+                type="text"
+                value={inputValue}
+                onCompositionStart={() => setIsComposing(true)}
+                onCompositionEnd={(e: CompositionEvent<HTMLInputElement>) => {
+                  setIsComposing(false);
+                  setInputValue(sanitizeNickname(e.currentTarget.value));
+                }}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                  const raw = e.target.value;
+                  setFieldError('');
+
+                  if (isComposing) {
+                    setInputValue(raw);
+                    return;
+                  }
+
+                  setInputValue(sanitizeNickname(raw));
+                }}
+                onBlur={() => {
+                  setInputValue((prev) => sanitizeNickname(prev));
+                }}
+                placeholder="닉네임을 입력하세요"
+                className={`w-full px-4 py-3 rounded-xl bg-white/10 border text-white placeholder:text-white/30 text-sm focus:outline-none focus:ring-1 ${
+                  fieldError
+                    ? 'border-red-400/60 focus:border-red-400/70 focus:ring-red-400/30'
+                    : 'border-white/20 focus:border-violet-400/50 focus:ring-violet-400/30'
+                }`}
+                disabled={submitting || checkingDuplicate}
+                autoFocus
+              />
+
+              <p className="text-[10px] text-white/30 mt-1">
+                {sanitizedLength}/5 글자
+              </p>
+
+              <p className="text-[10px] text-white/40 mt-1">
+                한글/영문만 사용 가능하며, 공백·숫자·특수문자는 사용할 수 없어요.
+              </p>
+
+              {fieldError ? (
+                <p className="text-[11px] text-red-300 mt-1">{fieldError}</p>
+              ) : null}
             </div>
 
-            {/* 배경 선택 */}
-            <div>
-              <h3 className="text-sm font-semibold text-white/80 mb-2">배경 선택</h3>
-              <div className="grid grid-cols-2 gap-2">
-                {freeBackgrounds.map((bg) => (
-                  <motion.button
-                    key={bg.id}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => setSelectedBg(bg.id)}
-                    disabled={submitting}
-                    className={`rounded-xl p-3 h-16 border transition-all relative overflow-hidden ${
-                      selectedBg === bg.id
-                        ? 'border-violet-400/50 ring-1 ring-violet-400/30'
-                        : 'border-white/10 hover:border-white/20'
-                    } disabled:opacity-60`}
-                    style={{ background: bg.gradient }}
-                  >
-                    <span className="relative z-10 text-xs text-white font-medium drop-shadow-lg">
-                      {bg.name}
-                    </span>
-
-                    {selectedBg === bg.id && (
-                      <div className="absolute top-1 right-1 w-4 h-4 bg-violet-500 rounded-full flex items-center justify-center">
-                        <Check className="w-3 h-3 text-white" />
-                      </div>
-                    )}
-                  </motion.button>
-                ))}
-              </div>
-            </div>
-
-            {/* 생성 버튼 */}
             <button
-              onClick={() => setShowConfirm(true)}
-              disabled={submitting}
-              className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 text-white font-semibold border border-white/20 shadow-[0_0_20px_rgba(139,92,246,0.4)] disabled:opacity-60"
+              onClick={handleCreate}
+              disabled={!isValid || submitting || checkingDuplicate}
+              className={`w-full py-3 rounded-xl text-sm font-semibold border transition-all ${
+                isValid && !checkingDuplicate
+                  ? 'bg-gradient-to-r from-violet-600 to-purple-600 text-white border-white/20 shadow-[0_0_20px_rgba(139,92,246,0.4)]'
+                  : 'bg-white/5 text-white/25 border-white/10 cursor-not-allowed'
+              }`}
             >
-              {submitting ? '생성 중...' : '캐릭터 생성하기'}
+              {checkingDuplicate
+                ? '중복 확인 중...'
+                : submitting
+                  ? '처리 중...'
+                  : isRename
+                    ? '변경하기'
+                    : '생성하기'}
             </button>
           </div>
         </motion.div>
 
-        {/* 확인 모달 */}
         <AnimatePresence>
           {showConfirm && (
             <motion.div
@@ -221,23 +304,23 @@ const CharacterSelectDialog = ({ open, onClose }: CharacterSelectDialogProps) =>
             >
               <div
                 className="absolute inset-0 bg-black/50"
-                onClick={() => !submitting && setShowConfirm(false)}
+                onClick={() => {
+                  if (!submitting) setShowConfirm(false);
+                }}
               />
+
               <motion.div
                 initial={{ scale: 0.9 }}
                 animate={{ scale: 1 }}
                 exit={{ scale: 0.9 }}
-                className="relative bg-slate-900 rounded-2xl border border-yellow-500/30 p-5 w-full max-w-[300px]"
+                className="relative bg-slate-900 rounded-2xl border border-violet-500/30 p-5 w-full max-w-[300px]"
               >
-                <div className="flex items-center gap-2 mb-3">
-                  <AlertTriangle className="w-5 h-5 text-yellow-400" />
-                  <h3 className="font-bold text-white">안내</h3>
-                </div>
+                <h3 className="font-bold text-white text-center mb-3">
+                  "{sanitizeNickname(trimmedValue)}"
+                </h3>
 
-                <p className="text-sm text-white/70 mb-4">
-                  한번 선택하면 되돌릴 수 없습니다.
-                  <br />
-                  캐릭터와 배경은 이후 상점에서 코인으로 교체할 수 있습니다.
+                <p className="text-sm text-white/70 text-center mb-4">
+                  이 닉네임으로 {isRename ? '변경' : '선택'}하시겠습니까?
                 </p>
 
                 <div className="flex gap-2">
@@ -248,6 +331,7 @@ const CharacterSelectDialog = ({ open, onClose }: CharacterSelectDialogProps) =>
                   >
                     아니요
                   </button>
+
                   <button
                     onClick={handleConfirm}
                     disabled={submitting}

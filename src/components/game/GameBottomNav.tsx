@@ -18,14 +18,14 @@ interface GameBottomNavProps {
 
 const GameBottomNav = ({ activeTab, onTabChange, isLocked = false }: GameBottomNavProps) => {
   const sideItems: { id: GameTab; icon: typeof ScrollText; label: string; accentFrom: string; accentTo: string; glowColor: string }[] = [
-    { id: 'missions', icon: ScrollText, label: 'AI 미션', accentFrom: 'from-amber-500', accentTo: 'to-orange-600', glowColor: 'rgba(245,158,11,0.5)' },
-    { id: 'shop', icon: ShoppingBag, label: '상점', accentFrom: 'from-cyan-500', accentTo: 'to-blue-600', glowColor: 'rgba(6,182,212,0.5)' },
+    { id: 'missions', icon: ScrollText, label: 'AI 미션', accentFrom: 'from-cyan-500', accentTo: 'to-blue-600', glowColor: 'rgba(6,182,212,0.5)' },
+    { id: 'shop', icon: ShoppingBag, label: '상점', accentFrom: 'from-amber-500', accentTo: 'to-orange-600', glowColor: 'rgba(245,158,11,0.5)' },
   ];
 
   return (
-    <div className="relative z-10 px-4 pb-5 pt-2 safe-area-bottom bg-transparent">
+    <div className="relative z-10 px-4 pb-5 pt-8 safe-area-bottom bg-transparent">
 
-      <div className="flex items-end justify-around">
+      <div className="flex items-end justify-around -translate-y-3">
         {/* 왼쪽: AI 미션 */}
         {(() => {
           const item = sideItems[0];
@@ -43,22 +43,18 @@ const GameBottomNav = ({ activeTab, onTabChange, isLocked = false }: GameBottomN
               <motion.div
                 className={`relative w-14 h-14 rounded-2xl flex items-center justify-center overflow-hidden transition-all duration-200 ${
                   isActive
-                    ? `bg-gradient-to-br ${item.accentFrom} ${item.accentTo} border-2 border-amber-300/50`
+                    ? `bg-gradient-to-br ${item.accentFrom} ${item.accentTo} border-2 border-cyan-300/50`
                     : 'bg-white/[0.06] border border-white/[0.12]'
                 }`}
                 animate={isActive ? { y: -4 } : { y: 0 }}
                 style={isActive ? { boxShadow: `0 8px 24px -4px ${item.glowColor}` } : {}}
               >
                 {isActive && (
-                  <motion.div
-                    className="absolute inset-0 bg-gradient-to-t from-white/20 to-transparent"
-                    animate={{ opacity: [0.3, 0.6, 0.3] }}
-                    transition={{ duration: 2, repeat: Infinity }}
-                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-white/15 to-transparent" />
                 )}
                 {isLocked ? <Lock className="w-5 h-5 relative z-10 text-white/30" /> : <item.icon className={`w-6 h-6 relative z-10 ${isActive ? 'text-white drop-shadow-lg' : 'text-white/40'}`} />}
               </motion.div>
-              <span className={`text-[10px] font-bold tracking-wide ${isActive ? 'text-amber-300' : 'text-white/30'}`}>
+              <span className={`text-[10px] font-bold tracking-wide ${isActive ? 'text-cyan-300' : 'text-white/30'}`}>
                 {item.label}
               </span>
             </motion.button>
@@ -86,11 +82,7 @@ const GameBottomNav = ({ activeTab, onTabChange, isLocked = false }: GameBottomN
                 {/* 내부 광택 효과 */}
                 {isActive && (
                   <>
-                    <motion.div
-                      className="absolute inset-0 bg-gradient-to-t from-transparent via-white/10 to-white/25"
-                      animate={{ opacity: [0.5, 0.8, 0.5] }}
-                      transition={{ duration: 2.5, repeat: Infinity }}
-                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-transparent via-white/8 to-white/20" />
                     <motion.div
                       className="absolute -top-1 -right-1 w-4 h-4"
                       animate={{ rotate: [0, 180, 360], scale: [0.8, 1.2, 0.8] }}
@@ -126,22 +118,18 @@ const GameBottomNav = ({ activeTab, onTabChange, isLocked = false }: GameBottomN
               <motion.div
                 className={`relative w-14 h-14 rounded-2xl flex items-center justify-center overflow-hidden transition-all duration-200 ${
                   isActive
-                    ? `bg-gradient-to-br ${item.accentFrom} ${item.accentTo} border-2 border-cyan-300/50`
+                    ? `bg-gradient-to-br ${item.accentFrom} ${item.accentTo} border-2 border-amber-300/50`
                     : 'bg-white/[0.06] border border-white/[0.12]'
                 }`}
                 animate={isActive ? { y: -4 } : { y: 0 }}
                 style={isActive ? { boxShadow: `0 8px 24px -4px ${item.glowColor}` } : {}}
               >
                 {isActive && (
-                  <motion.div
-                    className="absolute inset-0 bg-gradient-to-t from-white/20 to-transparent"
-                    animate={{ opacity: [0.3, 0.6, 0.3] }}
-                    transition={{ duration: 2, repeat: Infinity }}
-                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-white/15 to-transparent" />
                 )}
                 {isLocked ? <Lock className="w-5 h-5 relative z-10 text-white/30" /> : <item.icon className={`w-6 h-6 relative z-10 ${isActive ? 'text-white drop-shadow-lg' : 'text-white/40'}`} />}
               </motion.div>
-              <span className={`text-[10px] font-bold tracking-wide ${isActive ? 'text-cyan-300' : 'text-white/30'}`}>
+              <span className={`text-[10px] font-bold tracking-wide ${isActive ? 'text-amber-300' : 'text-white/30'}`}>
                 {item.label}
               </span>
             </motion.button>

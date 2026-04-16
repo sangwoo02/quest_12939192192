@@ -19,6 +19,11 @@ import type { InBodyData, ManualInputData } from "@/types";
 
 type InputMethod = "select" | "samsung_health" | "samsung_health_sync" | "manual";
 
+const MIN_HEIGHT_CM = 50;
+const MAX_HEIGHT_CM = 250;
+const MIN_WEIGHT_KG = 10;
+const MAX_WEIGHT_KG = 200;
+
 const calculateAge = (birthDate: string): number => {
   const today = new Date();
   const birth = new Date(birthDate);
@@ -28,9 +33,16 @@ const calculateAge = (birthDate: string): number => {
   return age;
 };
 
+const clampNumberString = (value: string, min: number, max: number) => {
+  if (!value.trim()) return "";
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) return "";
+  return String(Math.min(max, Math.max(min, parsed)));
+};
+
 const OnboardingPage = () => {
   const navigate = useNavigate();
-  const { setInBodyData, setManualData, setOnboardingComplete, user, resetUserData } = useAppStore();
+  const { setInBodyData, setManualData, setOnboardingComplete, user, resetHealthcareLinkedData } = useAppStore();
   const { rnRequest } = useRnBridge();
 
   const [method, setMethod] = useState<InputMethod>("select");
@@ -113,11 +125,30 @@ const OnboardingPage = () => {
     }
   };
 
+
   const handleManualSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!height || !weight) {
       toast.error("키와 몸무게를 입력해주세요.");
+      return;
+    }
+
+    const parsedHeight = Number.parseFloat(height);
+    const parsedWeight = Number.parseFloat(weight);
+
+    if (!Number.isFinite(parsedHeight) || !Number.isFinite(parsedWeight)) {
+      toast.error("키와 몸무게는 숫자로 입력해주세요.");
+      return;
+    }
+
+    if (parsedHeight < MIN_HEIGHT_CM || parsedHeight > MAX_HEIGHT_CM) {
+      toast.error(`키는 ${MIN_HEIGHT_CM}~${MAX_HEIGHT_CM}cm 범위로 입력해주세요.`);
+      return;
+    }
+
+    if (parsedWeight < MIN_WEIGHT_KG || parsedWeight > MAX_WEIGHT_KG) {
+      toast.error(`몸무게는 ${MIN_WEIGHT_KG}~${MAX_WEIGHT_KG}kg 범위로 입력해주세요.`);
       return;
     }
 
@@ -129,16 +160,16 @@ const OnboardingPage = () => {
     try {
       await rnRequest("INBODY_MANUAL_SAVE_REQUEST", {
         token: token || undefined,
-        height: parseFloat(height),
-        weight: parseFloat(weight),
+        height: parsedHeight,
+        weight: parsedWeight,
         gender,
         goal,
       });
 
       const manualData: ManualInputData = {
         name: user?.nickname || "사용자",
-        height: parseFloat(height),
-        weight: parseFloat(weight),
+        height: parsedHeight,
+        weight: parsedWeight,
         age,
         gender,
         body_fat: bodyFat ? parseFloat(bodyFat) : gender === "male" ? 20 : 25,
@@ -158,7 +189,7 @@ const OnboardingPage = () => {
   };
 
   const handleSkip = () => {
-    resetUserData();
+    resetHealthcareLinkedData();
     setOnboardingComplete(true);
     navigate("/inbody");
   };
@@ -292,11 +323,35 @@ const OnboardingPage = () => {
               <form onSubmit={handleManualSubmit} className="space-y-5">
                 <div className="space-y-2">
                   <Label>키 (cm)</Label>
-                  <Input type="number" value={height} onChange={e => setHeight(e.target.value)} className="h-14 rounded-xl bg-secondary/50 text-center text-lg font-semibold" required />
+                  <Input
+                    type="number"
+                    value={height}
+                    min={MIN_HEIGHT_CM}
+                    max={MAX_HEIGHT_CM}
+                    step="0.1"
+                    inputMode="decimal"
+                    onChange={e => setHeight(e.target.value)}
+                    onBlur={() => setHeight(prev => clampNumberString(prev, MIN_HEIGHT_CM, MAX_HEIGHT_CM))}
+                    className="h-14 rounded-xl bg-secondary/50 text-center text-lg font-semibold"
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground">50~250cm 범위로 입력해주세요.</p>
                 </div>
                 <div className="space-y-2">
                   <Label>몸무게 (kg)</Label>
-                  <Input type="number" value={weight} onChange={e => setWeight(e.target.value)} className="h-14 rounded-xl bg-secondary/50 text-center text-lg font-semibold" required />
+                  <Input
+                    type="number"
+                    value={weight}
+                    min={MIN_WEIGHT_KG}
+                    max={MAX_WEIGHT_KG}
+                    step="0.1"
+                    inputMode="decimal"
+                    onChange={e => setWeight(e.target.value)}
+                    onBlur={() => setWeight(prev => clampNumberString(prev, MIN_WEIGHT_KG, MAX_WEIGHT_KG))}
+                    className="h-14 rounded-xl bg-secondary/50 text-center text-lg font-semibold"
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground">10~200kg 범위로 입력해주세요.</p>
                 </div>
                 <div className="space-y-2">
                   <Label className="text-sm text-muted-foreground">성별</Label>

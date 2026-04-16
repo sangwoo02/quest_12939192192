@@ -34,6 +34,8 @@ import HistoryPage from "./pages/HistoryPage";
 import GamePage from "./pages/GamePage";
 import ProfilePage from "./pages/ProfilePage";
 import MissionCoinShopPage from "./pages/MissionCoinShopPage";
+import WeekWalkPage from "./pages/WeekWalkPage";
+import WeekWalkRewardTierPage from "./pages/WeekWalkRewardTierPage";
 import NotFound from "./pages/NotFound";
 
 // React Query 클라이언트 인스턴스 생성
@@ -127,6 +129,22 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <MissionCoinShopPage />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/week-walk" 
+            element={
+              <ProtectedRoute>
+                <WeekWalkPage />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/week-walk/rewards" 
+            element={
+              <ProtectedRoute>
+                <WeekWalkRewardTierPage />
               </ProtectedRoute>
             } 
           />
