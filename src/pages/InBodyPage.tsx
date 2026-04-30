@@ -45,7 +45,7 @@ const calculateAge = (birthDate: string): number => {
 };
 
 const AVERAGE_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
-const AVERAGE_CACHE_KEY_PREFIX = 'healthcare_average_cache_v1';
+const AVERAGE_CACHE_KEY_PREFIX = 'healthcare_average_cache_v4';
 
 type AverageRange = { min: number; max: number; avg: number };
 
@@ -59,21 +59,45 @@ type CachedAverageData = {
   };
 };
 
-const getAverageCacheKey = (user?: { id?: string | number; email?: string; username?: string }) => {
-  const accountKey =
-    user?.id?.toString() ||
-    user?.email ||
-    user?.username ||
-    'anonymous';
+const getAgeBand = (age?: number | null) => {
+  if (!age || !Number.isFinite(age)) return 'unknown';
 
-  return `${AVERAGE_CACHE_KEY_PREFIX}:${accountKey}`;
+  const band = Math.floor(age / 10) * 10;
+  if (band < 10) return '10';
+  if (band > 60) return '60';
+
+  return String(band);
 };
 
-const readAverageCache = (
-  user?: { id?: string | number; email?: string; username?: string }
-): CachedAverageData | null => {
+const getAverageCacheKey = ({
+  userId,
+  gender,
+  age,
+}: {
+  userId?: string | number;
+  gender?: string | null;
+  age?: number | null;
+}) => {
+  const accountKey = userId?.toString() || 'anonymous';
+  const genderKey = (gender || 'unknown').toLowerCase();
+  const ageBandKey = getAgeBand(age);
+
+  return `${AVERAGE_CACHE_KEY_PREFIX}:${accountKey}:${genderKey}:${ageBandKey}`;
+};
+
+const readAverageCache = ({
+  userId,
+  gender,
+  age,
+}: {
+  userId?: string | number;
+  gender?: string | null;
+  age?: number | null;
+}): CachedAverageData | null => {
   try {
-    const raw = localStorage.getItem(getAverageCacheKey(user));
+    const raw = localStorage.getItem(
+      getAverageCacheKey({ userId, gender, age })
+    );
     if (!raw) return null;
 
     const parsed = JSON.parse(raw) as CachedAverageData;
@@ -89,7 +113,15 @@ const readAverageCache = (
 };
 
 const writeAverageCache = (
-  user: { id?: string | number; email?: string; username?: string } | undefined,
+  {
+    userId,
+    gender,
+    age,
+  }: {
+    userId?: string | number;
+    gender?: string | null;
+    age?: number | null;
+  },
   data: {
     height: AverageRange;
     weight: AverageRange;
@@ -103,7 +135,10 @@ const writeAverageCache = (
       data,
     };
 
-    localStorage.setItem(getAverageCacheKey(user), JSON.stringify(payload));
+    localStorage.setItem(
+      getAverageCacheKey({ userId, gender, age }),
+      JSON.stringify(payload)
+    );
   } catch {
     // localStorage 저장 실패 무시
   }
@@ -119,6 +154,8 @@ interface MetricCardProps {
   unit: string;
   status?: 'good' | 'warning' | 'bad' | 'neutral';
   comparison?: { avgMin: number; avgMax: number; userValue: number };
+  comparisonLabel?: string;
+  reference?: { label: string; value: number; unit?: string };
   icon: React.ElementType;
   delay?: number;
   showStatus?: boolean;
@@ -130,6 +167,8 @@ const MetricCard = ({
   unit,
   status = 'neutral',
   comparison,
+  comparisonLabel = '평균',
+  reference,
   icon: Icon,
   delay = 0,
   showStatus = true,
@@ -147,9 +186,26 @@ const MetricCard = ({
     neutral: '-',
   };
 
+  const usableComparison =
+    comparison &&
+    Number.isFinite(comparison.avgMin) &&
+    Number.isFinite(comparison.avgMax) &&
+    Number.isFinite(comparison.userValue) &&
+    comparison.avgMax > comparison.avgMin &&
+    comparison.avgMax > 0
+      ? comparison
+      : null;
+
+  const usableReference =
+    reference &&
+    Number.isFinite(reference.value) &&
+    reference.value > 0
+      ? reference
+      : null;
+
   const getComparisonIcon = () => {
-    if (!comparison) return null;
-    const { avgMin, avgMax, userValue } = comparison;
+    if (!usableComparison) return null;
+    const { avgMin, avgMax, userValue } = usableComparison;
     if (userValue < avgMin) return <TrendingDown className="w-4 h-4 text-warning" />;
     if (userValue > avgMax) return <TrendingUp className="w-4 h-4 text-warning" />;
     return <Minus className="w-4 h-4 text-success" />;
@@ -182,30 +238,48 @@ const MetricCard = ({
         <span className="text-xs text-muted-foreground">{unit}</span>
       </div>
 
-      {comparison && (
+      {usableComparison && (
         <div className="mt-2 pt-2 border-t border-border">
           <p className="text-[10px] text-muted-foreground">
-            평균: {comparison.avgMin} - {comparison.avgMax} {unit}
+            {comparisonLabel}: {usableComparison.avgMin} - {usableComparison.avgMax} {unit}
           </p>
 
           <div className="mt-1.5 h-1.5 bg-secondary rounded-full overflow-hidden relative">
             <div
               className="absolute h-full bg-success/30 rounded-full"
               style={{
-                left: `${(comparison.avgMin / (comparison.avgMax * 1.5)) * 100}%`,
-                width: `${((comparison.avgMax - comparison.avgMin) / (comparison.avgMax * 1.5)) * 100}%`,
+                left: `${(usableComparison.avgMin / (usableComparison.avgMax * 1.5)) * 100}%`,
+                width: `${((usableComparison.avgMax - usableComparison.avgMin) / (usableComparison.avgMax * 1.5)) * 100}%`,
               }}
             />
             <motion.div
               initial={{ left: 0 }}
               animate={{
-                left: `${Math.min((comparison.userValue / (comparison.avgMax * 1.5)) * 100, 100)}%`,
+                left: `${Math.min((usableComparison.userValue / (usableComparison.avgMax * 1.5)) * 100, 100)}%`,
               }}
               transition={{ delay: delay + 0.3, duration: 0.5 }}
               className="absolute w-2.5 h-2.5 -top-0.5 rounded-full gradient-primary border-2 border-card"
               style={{ transform: 'translateX(-50%)' }}
             />
           </div>
+
+          {usableReference && (
+            <div className="mt-2 pt-2 border-t border-border">
+              <p className="text-[10px] text-muted-foreground">
+                {usableReference.label}: {usableReference.value}
+                {(usableReference.unit ?? unit) ? ` ${usableReference.unit ?? unit}` : ''}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!usableComparison && usableReference && (
+        <div className="mt-2 pt-2 border-t border-border">
+          <p className="text-[10px] text-muted-foreground">
+            {usableReference.label}: {usableReference.value}
+            {(usableReference.unit ?? unit) ? ` ${usableReference.unit ?? unit}` : ''}
+          </p>
         </div>
       )}
     </motion.div>
@@ -253,7 +327,6 @@ interface WeightGoalCardProps {
   onSetTarget: (weight: number) => void | Promise<void>;
   disabled?: boolean;
   averageWeightRange?: { min: number; max: number; avg: number };
-  averageReady?: boolean;
 }
 
 const WeightGoalCard = ({
@@ -263,25 +336,22 @@ const WeightGoalCard = ({
   onSetTarget,
   disabled = false,
   averageWeightRange,
-  averageReady = false,
 }: WeightGoalCardProps) => {
   const [inputValue, setInputValue] = useState(targetWeight?.toString() || '');
   const [isEditing, setIsEditing] = useState(false);
 
   const heightM = height / 100;
-  const bmiMinWeight = Math.round(18.5 * heightM * heightM * 10) / 10;
-  const bmiMaxWeight = Math.round(24.9 * heightM * heightM * 10) / 10;
+  const hasValidHeight = Number.isFinite(heightM) && heightM > 0;
+  const bmiMinWeight = hasValidHeight ? Math.round(BMI_NORMAL_RANGE.min * heightM * heightM * 10) / 10 : 0;
+  const bmiMaxWeight = hasValidHeight ? Math.round(BMI_NORMAL_RANGE.max * heightM * heightM * 10) / 10 : 0;
 
-  const minNormalWeight =
-    averageWeightRange && Number.isFinite(averageWeightRange.min) && averageWeightRange.min > 0
-      ? averageWeightRange.min
-      : bmiMinWeight;
+  // 목표 체중의 기준 범위는 공공데이터 평균 체중이 아니라
+  // 한국 성인 BMI 정상 구간(18.5~22.9)을 사용자 키에 적용해 계산한다.
+  const minNormalWeight = bmiMinWeight;
+  const maxNormalWeight = bmiMaxWeight;
+  const hasNormalWeightRange = hasValidHeight && maxNormalWeight > minNormalWeight;
 
-  const maxNormalWeight =
-    averageWeightRange && Number.isFinite(averageWeightRange.max) && averageWeightRange.max > 0
-      ? averageWeightRange.max
-      : bmiMaxWeight;
-
+  // 공공데이터 평균 체중은 정상 범위가 아니라 참고값으로만 사용한다.
   const recommendedWeight =
     averageWeightRange && Number.isFinite(averageWeightRange.avg) && averageWeightRange.avg > 0
       ? averageWeightRange.avg
@@ -294,18 +364,23 @@ const WeightGoalCard = ({
       return;
     }
 
+    if (!hasValidHeight) {
+      toast.error('키 정보가 없어 정상 체중 범위를 계산할 수 없습니다.');
+      return;
+    }
+
     if (weight >= minNormalWeight && weight <= maxNormalWeight) {
       await onSetTarget(weight);
       setIsEditing(false);
       toast.success('목표 체중이 설정되었습니다!');
     } else {
-      toast.error(`정상 범위(${minNormalWeight}~${maxNormalWeight}kg) 내에서 설정해주세요.`);
+      toast.error(`BMI 기준 범위(${minNormalWeight}~${maxNormalWeight}kg) 내에서 설정해주세요.`);
     }
   };
 
   const weightDiff = targetWeight ? Math.abs(currentWeight - targetWeight) : 0;
   const isLosing = targetWeight ? currentWeight > targetWeight : false;
-  const progressPercent = targetWeight
+  const progressPercent = targetWeight && hasNormalWeightRange
     ? Math.min(
         Math.max(((currentWeight - minNormalWeight) / (maxNormalWeight - minNormalWeight)) * 100, 0),
         100
@@ -341,7 +416,7 @@ const WeightGoalCard = ({
           {disabled && targetWeight && (
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-muted/80">
               <Lock className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-xs font-medium text-muted-foreground">미션 진행중</span>
+              <span className="text-xs font-medium text-muted-foreground">챌린지 진행중</span>
             </div>
           )}
 
@@ -350,7 +425,7 @@ const WeightGoalCard = ({
               variant="outline"
               size="sm"
               onClick={() => setIsEditing(true)}
-              disabled={!averageReady}
+              disabled={!hasValidHeight}
               className="text-xs text-primary border-primary/30 hover:bg-primary/5 disabled:opacity-50"
             >
               {targetWeight ? '수정' : '설정하기'}
@@ -382,12 +457,12 @@ const WeightGoalCard = ({
               onClick={() => setInputValue(String(recommendedWeight))}
               className="text-xs text-primary"
             >
-              평균 체중 적용 ({recommendedWeight}kg)
+              공공데이터 평균 참고 ({recommendedWeight}kg)
             </Button>
           )}
 
           <p className="text-xs text-muted-foreground">
-            정상 범위: <span className="font-medium text-foreground">{minNormalWeight} ~ {maxNormalWeight} kg</span>
+            BMI 기준 범위: <span className="font-medium text-foreground">{minNormalWeight} ~ {maxNormalWeight} kg</span>
           </p>
 
           <div className="p-3 bg-warning/10 rounded-xl border border-warning/20">
@@ -442,10 +517,12 @@ const WeightGoalCard = ({
               transition={{ delay: 0.5 }}
               className="absolute top-[-3px] w-0.5 h-[18px] bg-foreground/60 rounded-full"
               style={{
-                left: `${Math.min(
-                  Math.max(((targetWeight - minNormalWeight) / (maxNormalWeight - minNormalWeight)) * 100, 0),
-                  100
-                )}%`,
+                left: `${hasNormalWeightRange
+                  ? Math.min(
+                      Math.max(((targetWeight - minNormalWeight) / (maxNormalWeight - minNormalWeight)) * 100, 0),
+                      100
+                    )
+                  : 0}%`,
                 transform: 'translateX(-50%)',
               }}
             />
@@ -470,6 +547,25 @@ const DEFAULT_AVERAGE_DATA = {
   bmr: { min: 1500, max: 1800, avg: 1650 },
 };
 
+// 한국 성인 BMI 분류 기준: 정상 18.5~22.9, 비만전단계 23.0~24.9, 비만 25.0 이상.
+// 공공데이터 평균값은 참고값일 뿐 정상/위험 판정 기준으로 쓰지 않는다.
+const BMI_NORMAL_RANGE: AverageRange = { min: 18.5, max: 22.9, avg: 20.7 };
+const BMI_PRE_OBESITY_MAX = 24.9;
+
+const getBmiWeightRange = (heightCm?: number | null): AverageRange => {
+  const heightM = Number(heightCm || 0) / 100;
+
+  if (!Number.isFinite(heightM) || heightM <= 0) {
+    return { min: 0, max: 0, avg: 0 };
+  }
+
+  return {
+    min: Math.round(BMI_NORMAL_RANGE.min * heightM * heightM * 10) / 10,
+    max: Math.round(BMI_NORMAL_RANGE.max * heightM * heightM * 10) / 10,
+    avg: Math.round(BMI_NORMAL_RANGE.avg * heightM * heightM * 10) / 10,
+  };
+};
+
 const InBodyPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -491,6 +587,15 @@ const InBodyPage = () => {
   const userId = user?.id?.toString() || user?.username || 'anonymous';
   const userNickname = user?.nickname;
   const userBirthDate = user?.birthDate;
+  const averageGender =
+    inBodyData?.gender ||
+    manualData?.gender ||
+    'male';
+
+  const averageAge =
+    inBodyData?.age ||
+    manualData?.age ||
+    (userBirthDate ? calculateAge(userBirthDate) : null);
 
   const [activityData, setActivityData] = useState<{ steps?: number; calories?: number } | null>(null);
   const [isFastLoading, setIsFastLoading] = useState(true);
@@ -588,6 +693,8 @@ const InBodyPage = () => {
       const avg = avgResponse?.average;
       if (!avg) return;
 
+      // 공공데이터 평균값은 정상범위가 아니라 비교용 참고값이다.
+      // min/max는 그래프 표시용 참고구간으로만 사용하고, 의학 판정에는 쓰지 않는다.
       const range = (x: number, pct = 0.1) => ({
         min: +(x * (1 - pct)).toFixed(1),
         max: +(x * (1 + pct)).toFixed(1),
@@ -611,9 +718,16 @@ const InBodyPage = () => {
         ...nextAverageData,
       }));
 
-      writeAverageCache({ id: userId }, nextAverageData);
+      writeAverageCache(
+        {
+          userId,
+          gender: averageGender,
+          age: averageAge,
+        },
+        nextAverageData
+      );
     },
-    [userId]
+    [userId, averageGender, averageAge]
   );
 
   const saveTargetWeight = useCallback(
@@ -662,7 +776,11 @@ const InBodyPage = () => {
     };
 
     const fetchAverage = async () => {
-      const cached = readAverageCache({ id: userId });
+      const cached = readAverageCache({
+        userId,
+        gender: averageGender,
+        age: averageAge,
+      });
 
       if (cached?.data && !cancelled) {
         setAverageData((prev) => ({
@@ -682,6 +800,7 @@ const InBodyPage = () => {
         }
 
         const avg = await rnRequest('HEALTHCARE_AVERAGE_REQUEST', { token });
+        console.log('[HEALTHCARE_AVERAGE_RESPONSE]', avg);
 
         if (!cancelled) {
           applyAverageData(avg);
@@ -700,7 +819,7 @@ const InBodyPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [applyFastData, applyAverageData, rnRequest, userId]);
+  }, [applyFastData, applyAverageData, rnRequest, userId, averageGender, averageAge]);
 
   const userData = inBodyData
     ? inBodyData
@@ -727,16 +846,20 @@ const InBodyPage = () => {
         }
       : null;
 
-  const getStatus = (
-    value: number,
-    range: { min: number; max: number }
-  ): 'good' | 'warning' | 'bad' => {
-    if (value >= range.min && value <= range.max) return 'good';
-    if (value < range.min * 0.9 || value > range.max * 1.1) return 'bad';
+  const normalWeightRange = userData
+    ? getBmiWeightRange(userData.height)
+    : DEFAULT_AVERAGE_DATA.weight;
+
+  const getBmiStatus = (value: number): 'good' | 'warning' | 'bad' => {
+    if (value >= BMI_NORMAL_RANGE.min && value <= BMI_NORMAL_RANGE.max) return 'good';
+    if (value > BMI_PRE_OBESITY_MAX || value < 16) return 'bad';
     return 'warning';
   };
 
-  const averageWeightReady = Number.isFinite(averageData.weight.avg) && averageData.weight.avg > 0;
+  const publicAverageHeightReady = Number.isFinite(averageData.height.avg) && averageData.height.avg > 0;
+  const publicAverageWeightReady = Number.isFinite(averageData.weight.avg) && averageData.weight.avg > 0;
+  const publicAverageBmiReady = Number.isFinite(averageData.bmi.avg) && averageData.bmi.avg > 0;
+  const publicAverageBodyFatReady = Number.isFinite(averageData.body_fat.avg) && averageData.body_fat.avg > 0;
 
   if (!isFastLoading && !userData) {
     return (
@@ -877,17 +1000,36 @@ const InBodyPage = () => {
                   icon={Ruler}
                   delay={0.3}
                   showStatus={false}
+                  reference={
+                    publicAverageHeightReady
+                      ? {
+                          label: '공공데이터 평균',
+                          value: averageData.height.avg,
+                          unit: 'cm',
+                        }
+                      : undefined
+                  }
                 />
                 <MetricCard
                   label="몸무게"
                   value={userData.weight.toFixed(1)}
                   unit="kg"
-                  status={getStatus(userData.weight, averageData.weight)}
+                  status={getBmiStatus(userData.bmi)}
                   comparison={{
-                    avgMin: averageData.weight.min,
-                    avgMax: averageData.weight.max,
+                    avgMin: normalWeightRange.min,
+                    avgMax: normalWeightRange.max,
                     userValue: userData.weight,
                   }}
+                  comparisonLabel="BMI 기준 범위"
+                  reference={
+                    publicAverageWeightReady
+                      ? {
+                          label: '공공데이터 평균',
+                          value: averageData.weight.avg,
+                          unit: 'kg',
+                        }
+                      : undefined
+                  }
                   icon={Scale}
                   delay={0.35}
                 />
@@ -899,8 +1041,7 @@ const InBodyPage = () => {
                 targetWeight={targetWeight}
                 onSetTarget={saveTargetWeight}
                 disabled={hasMissionsGenerated}
-                averageWeightRange={averageData.weight}
-                averageReady={averageWeightReady}
+                averageWeightRange={publicAverageWeightReady ? averageData.weight : undefined}
               />
 
               <div className="grid grid-cols-2 gap-3">
@@ -908,12 +1049,21 @@ const InBodyPage = () => {
                   label="BMI"
                   value={userData.bmi.toFixed(1)}
                   unit=""
-                  status={getStatus(userData.bmi, averageData.bmi)}
+                  status={getBmiStatus(userData.bmi)}
                   comparison={{
-                    avgMin: averageData.bmi.min,
-                    avgMax: averageData.bmi.max,
+                    avgMin: BMI_NORMAL_RANGE.min,
+                    avgMax: BMI_NORMAL_RANGE.max,
                     userValue: userData.bmi,
                   }}
+                  comparisonLabel="BMI 정상 범위"
+                  reference={
+                    publicAverageBmiReady
+                      ? {
+                          label: '공공데이터 평균',
+                          value: averageData.bmi.avg,
+                        }
+                      : undefined
+                  }
                   icon={Heart}
                   delay={0.4}
                 />
@@ -921,14 +1071,18 @@ const InBodyPage = () => {
                   label="체지방률"
                   value={userData.body_fat.toFixed(1)}
                   unit="%"
-                  status={getStatus(userData.body_fat, averageData.body_fat)}
-                  comparison={{
-                    avgMin: averageData.body_fat.min,
-                    avgMax: averageData.body_fat.max,
-                    userValue: userData.body_fat,
-                  }}
                   icon={Droplets}
                   delay={0.45}
+                  showStatus={false}
+                  reference={
+                    publicAverageBodyFatReady
+                      ? {
+                          label: '공공데이터 평균',
+                          value: averageData.body_fat.avg,
+                          unit: '%',
+                        }
+                      : undefined
+                  }
                 />
               </div>
             </div>

@@ -4,10 +4,15 @@
  * - startedAt / endsAt / uiState / currentRound를 외부 상태와 동기화
  * - 홈/상점 이동 후 돌아와도 진행 상태 복원
  * - 앱 재실행 후에도 persisted store 기준으로 복원 가능
+ * - RN(WebView) 환경에서는 각 회차 체크 시간이 될 때마다 로컬 알림 예약
+ * - 앱이 켜져 있는 상태에서 체크 시간이 되면 즉시 알림/진동 실행
+ * - RN 예약 알림에 targetTimeMs를 같이 전달하여 DATE trigger 사용 가능
  */
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Play, CheckCircle2, Timer, Droplets } from "lucide-react";
+import { useRnBridge } from "@/hooks/useRnBridge";
+import { useAppStore } from "@/stores/appStore";
 
 interface MissionRoutineWidgetProps {
   totalRounds: number;
@@ -17,6 +22,7 @@ interface MissionRoutineWidgetProps {
   endsAt?: number;
   currentRound?: number;
   uiState?: "idle" | "waiting" | "ready" | "done";
+  notificationKey: string;
   onStateChange: (payload: {
     startedAt?: number;
     endsAt?: number;
@@ -24,7 +30,10 @@ interface MissionRoutineWidgetProps {
     checkedCount: number;
     uiState: "idle" | "waiting" | "ready" | "done";
   }) => void;
-  onComplete: (payload: { checkedCount: number; routineCompleted: boolean }) => void;
+  onComplete: (payload: {
+    checkedCount: number;
+    routineCompleted: boolean;
+  }) => void;
 }
 
 const MissionRoutineWidget = ({
@@ -35,18 +44,28 @@ const MissionRoutineWidget = ({
   endsAt,
   currentRound = 0,
   uiState = "idle",
+  notificationKey,
   onStateChange,
   onComplete,
 }: MissionRoutineWidgetProps) => {
-  const [state, setState] = useState<"idle" | "waiting" | "ready" | "done">(() => {
-    if (completed) return "done";
-    if (uiState === "waiting" && endsAt && endsAt > Date.now()) return "waiting";
-    if (uiState === "ready") return "ready";
-    if (uiState === "done") return "done";
-    return "idle";
-  });
+  const { rnRequest, isRnWebViewAvailable } = useRnBridge();
+  const currentUser = useAppStore((store) => store.user);
 
-  const [round, setRound] = useState<number>(completed ? totalRounds : currentRound);
+  const [state, setState] = useState<"idle" | "waiting" | "ready" | "done">(
+    () => {
+      if (completed) return "done";
+      if (uiState === "waiting" && endsAt && endsAt > Date.now()) {
+        return "waiting";
+      }
+      if (uiState === "ready") return "ready";
+      if (uiState === "done") return "done";
+      return "idle";
+    },
+  );
+
+  const [round, setRound] = useState<number>(
+    completed ? totalRounds : currentRound,
+  );
 
   const [secondsLeft, setSecondsLeft] = useState<number>(() => {
     if (completed) return 0;
@@ -58,6 +77,140 @@ const MissionRoutineWidget = ({
 
   const completeCalledRef = useRef(completed);
   const readySyncedRef = useRef(false);
+  const scheduledEndsAtRef = useRef<number | null>(null);
+  const hadWaitingStateRef = useRef(false);
+
+  const scheduleRoutineCheckNotification = useCallback(
+    async (targetEndsAt: number, nextRound: number) => {
+      if (!isRnWebViewAvailable()) return;
+
+      const rawSeconds = Math.ceil((targetEndsAt - Date.now()) / 1000);
+      if (rawSeconds <= 0) return;
+
+      const safeNextRound = Math.min(Math.max(nextRound, 1), totalRounds);
+      const seconds = Math.max(1, rawSeconds);
+
+      try {
+        const result = await rnRequest(
+          "MISSION_TIMER_NOTIFICATION_SCHEDULE_REQUEST",
+          {
+            userId: currentUser?.id,
+            username: currentUser?.username,
+            notificationKey,
+            seconds,
+            targetTimeMs: targetEndsAt,
+            title: `루틴 체크 ${safeNextRound}/${totalRounds}회차`,
+            body: `${safeNextRound}/${totalRounds}회차 루틴 체크 시간이 되었어요. 앱으로 돌아와 체크 완료를 눌러보세요.`,
+            data: {
+              notificationKey,
+              type: "mission_routine_check_ready",
+              targetRound: safeNextRound,
+              totalRounds,
+              intervalMinutes,
+              endsAt: targetEndsAt,
+            },
+          },
+        );
+
+        if (!result?.scheduled) {
+          console.warn(
+            "루틴 체크 알림 예약 실패:",
+            result?.reason || "unknown",
+          );
+        } else {
+          console.log("루틴 체크 알림 예약 성공:", {
+            notificationKey,
+            identifier: result.identifier,
+            seconds,
+            targetTimeMs: targetEndsAt,
+            targetRound: safeNextRound,
+            endsAt: targetEndsAt,
+          });
+        }
+      } catch (error) {
+        console.warn("루틴 체크 알림 예약 실패:", error);
+      }
+    },
+    [
+      currentUser?.id,
+      currentUser?.username,
+      intervalMinutes,
+      isRnWebViewAvailable,
+      notificationKey,
+      rnRequest,
+      totalRounds,
+    ],
+  );
+
+  const cancelRoutineCheckNotification = useCallback(async () => {
+    if (!isRnWebViewAvailable()) return;
+
+    try {
+      await rnRequest("MISSION_TIMER_NOTIFICATION_CANCEL_REQUEST", {
+        userId: currentUser?.id,
+        username: currentUser?.username,
+        notificationKey,
+      });
+    } catch (error) {
+      console.warn("루틴 체크 알림 취소 실패:", error);
+    }
+  }, [
+    currentUser?.id,
+    currentUser?.username,
+    isRnWebViewAvailable,
+    notificationKey,
+    rnRequest,
+  ]);
+
+  const showRoutineCheckNotificationNow = useCallback(
+    async (targetRound: number) => {
+      if (!isRnWebViewAvailable()) return;
+
+      const safeRound = Math.min(Math.max(targetRound, 1), totalRounds);
+
+      try {
+        await rnRequest("MISSION_TIMER_NOTIFICATION_NOW_REQUEST", {
+          userId: currentUser?.id,
+          username: currentUser?.username,
+          notificationKey,
+          title: `루틴 체크 ${safeRound}/${totalRounds}회차`,
+          body: `${safeRound}/${totalRounds}회차 루틴 체크 시간이 되었어요. 앱으로 돌아와 체크 완료를 눌러보세요.`,
+          data: {
+            notificationKey,
+            type: "mission_routine_check_ready_now",
+            originalType: "mission_routine_check_ready",
+            targetRound: safeRound,
+            totalRounds,
+            intervalMinutes,
+            endsAt,
+            immediate: true,
+          },
+        });
+      } catch (error) {
+        console.warn("루틴 체크 즉시 알림 실행 실패:", error);
+      }
+    },
+    [
+      currentUser?.id,
+      currentUser?.username,
+      endsAt,
+      intervalMinutes,
+      isRnWebViewAvailable,
+      notificationKey,
+      rnRequest,
+      totalRounds,
+    ],
+  );
+
+  useEffect(() => {
+    if (state === "waiting") {
+      hadWaitingStateRef.current = true;
+    }
+
+    if (state === "idle" || state === "done") {
+      hadWaitingStateRef.current = false;
+    }
+  }, [state]);
 
   useEffect(() => {
     if (completed) {
@@ -66,6 +219,7 @@ const MissionRoutineWidget = ({
       setSecondsLeft(0);
       completeCalledRef.current = true;
       readySyncedRef.current = false;
+      hadWaitingStateRef.current = false;
       return;
     }
 
@@ -107,12 +261,13 @@ const MissionRoutineWidget = ({
     setSecondsLeft(intervalMinutes * 60);
     completeCalledRef.current = false;
     readySyncedRef.current = false;
+    hadWaitingStateRef.current = false;
   }, [completed, currentRound, endsAt, intervalMinutes, totalRounds, uiState]);
 
   useEffect(() => {
     if (state !== "waiting" || !endsAt) return;
 
-    const id = setInterval(() => {
+    const id = window.setInterval(() => {
       const remain = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
       setSecondsLeft(remain);
 
@@ -121,12 +276,20 @@ const MissionRoutineWidget = ({
       }
     }, 1000);
 
-    return () => clearInterval(id);
+    return () => window.clearInterval(id);
   }, [state, endsAt]);
 
   useEffect(() => {
     if (state === "ready" && !readySyncedRef.current) {
       readySyncedRef.current = true;
+
+      const shouldShowImmediateNotification = hadWaitingStateRef.current;
+      hadWaitingStateRef.current = false;
+
+      if (shouldShowImmediateNotification) {
+        void showRoutineCheckNotificationNow(round + 1);
+      }
+
       onStateChange({
         startedAt,
         endsAt,
@@ -135,11 +298,19 @@ const MissionRoutineWidget = ({
         uiState: "ready",
       });
     }
-  }, [state, startedAt, endsAt, round, onStateChange]);
+  }, [
+    state,
+    startedAt,
+    endsAt,
+    round,
+    onStateChange,
+    showRoutineCheckNotificationNow,
+  ]);
 
   useEffect(() => {
     if (state === "done" && !completeCalledRef.current) {
       completeCalledRef.current = true;
+
       onComplete({
         checkedCount: totalRounds,
         routineCompleted: true,
@@ -147,10 +318,33 @@ const MissionRoutineWidget = ({
     }
   }, [state, totalRounds, onComplete]);
 
+  useEffect(() => {
+    if (state === "waiting" && endsAt && endsAt > Date.now()) {
+      if (scheduledEndsAtRef.current !== endsAt) {
+        scheduledEndsAtRef.current = endsAt;
+        void scheduleRoutineCheckNotification(endsAt, round + 1);
+      }
+      return;
+    }
+
+    if (state === "idle" || state === "done") {
+      scheduledEndsAtRef.current = null;
+      void cancelRoutineCheckNotification();
+    }
+  }, [
+    state,
+    endsAt,
+    round,
+    scheduleRoutineCheckNotification,
+    cancelRoutineCheckNotification,
+  ]);
+
   const fmt = (s: number) => {
     const m = Math.floor(s / 60);
     const sec = s % 60;
-    return `${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`;
+    return `${m.toString().padStart(2, "0")}:${sec
+      .toString()
+      .padStart(2, "0")}`;
   };
 
   const totalSeconds = Math.max(intervalMinutes * 60, 1);
@@ -163,12 +357,14 @@ const MissionRoutineWidget = ({
         onClick={() => {
           const now = Date.now();
           const nextEndsAt = now + intervalMinutes * 60 * 1000;
+          const nextRound = currentRound + 1;
 
           setSecondsLeft(intervalMinutes * 60);
           setState("waiting");
           setRound(currentRound);
           completeCalledRef.current = false;
           readySyncedRef.current = false;
+          hadWaitingStateRef.current = true;
 
           onStateChange({
             startedAt: now,
@@ -177,6 +373,9 @@ const MissionRoutineWidget = ({
             checkedCount: currentRound,
             uiState: "waiting",
           });
+
+          scheduledEndsAtRef.current = nextEndsAt;
+          void scheduleRoutineCheckNotification(nextEndsAt, nextRound);
         }}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-500/20 border border-violet-400/30 text-violet-300 text-[11px] font-semibold"
       >
@@ -191,7 +390,9 @@ const MissionRoutineWidget = ({
       <div className="space-y-1 mt-1">
         <div className="flex items-center gap-2">
           <Timer className="w-3.5 h-3.5 text-violet-400 animate-pulse" />
-          <span className="text-xs font-mono text-violet-300">{fmt(secondsLeft)}</span>
+          <span className="text-xs font-mono text-violet-300">
+            {fmt(secondsLeft)}
+          </span>
           <span className="text-[10px] text-white/40">
             ({round}/{totalRounds}회)
           </span>
@@ -228,6 +429,7 @@ const MissionRoutineWidget = ({
           setSecondsLeft(intervalMinutes * 60);
           setState("waiting");
           readySyncedRef.current = false;
+          hadWaitingStateRef.current = true;
 
           onStateChange({
             startedAt: now,
@@ -236,6 +438,9 @@ const MissionRoutineWidget = ({
             checkedCount: nextRound,
             uiState: "waiting",
           });
+
+          scheduledEndsAtRef.current = nextEndsAt;
+          void scheduleRoutineCheckNotification(nextEndsAt, nextRound + 1);
         }}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/20 border border-blue-400/30 text-blue-300 text-[11px] font-semibold animate-pulse"
       >
@@ -246,7 +451,7 @@ const MissionRoutineWidget = ({
   }
 
   return (
-    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 text-[11px] font-semibold">
+    <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 text-[11px] font-semibold">
       <CheckCircle2 className="w-3 h-3" />
       완료됨
     </div>

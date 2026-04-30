@@ -113,7 +113,7 @@ const AuthPage = () => {
     let cancelled = false;
     (async () => {
       try {
-        const data = await rnRequest("AUTH_CHECK_EMAIL_REQUEST", { username: email });
+        const data = await rnRequest("AUTH_CHECK_USERNAME_REQUEST", { username: email });
         if (!cancelled) setEmailCheckCache({ email, exists: !!data.exists });
       } catch {
         if (!cancelled) setEmailCheckCache(null);
@@ -236,6 +236,8 @@ const AuthPage = () => {
                 token: accessToken,
                 gender: existingGender,
                 goal: existingGoal,
+                userId: userForStore.id,
+                username: userForStore.username,
               });
 
               // 자동 동기화 후 최신 데이터 다시 조회
@@ -360,7 +362,7 @@ const AuthPage = () => {
     }
     setForgotLoading(true);
     try {
-      const data = await rnRequest("AUTH_CHECK_EMAIL_REQUEST", { username: forgotEmail });
+      const data = await rnRequest("AUTH_CHECK_USERNAME_REQUEST", { username: forgotEmail });
       if (data?.exists) {
         setForgotStep('reset');
         setForgotEmailError('');

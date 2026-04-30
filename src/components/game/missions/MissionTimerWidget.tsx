@@ -8,11 +8,14 @@
  * 3) 타이머 종료 시 onComplete 자동 호출
  * 4) done 상태에서는 "완료됨" 표시만 렌더링
  * 5) RN(WebView) 환경에서는 타이머 종료 시 로컬 알림 예약
+ * 6) 앱이 켜져 있는 상태에서 타이머가 끝나면 즉시 알림/진동 실행
+ * 7) RN 예약 알림에 targetTimeMs를 같이 전달하여 DATE trigger 사용 가능
  */
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Play, CheckCircle2, Timer } from "lucide-react";
 import { useRnBridge } from "@/hooks/useRnBridge";
+import { useAppStore } from "@/stores/appStore";
 
 interface MissionTimerWidgetProps {
   minutes: number;
@@ -42,10 +45,13 @@ const MissionTimerWidget = ({
   onComplete,
 }: MissionTimerWidgetProps) => {
   const { rnRequest, isRnWebViewAvailable } = useRnBridge();
+  const currentUser = useAppStore((state) => state.user);
 
   const [state, setState] = useState<"idle" | "running" | "done">(() => {
     if (completed) return "done";
-    if (uiState === "running" && endsAt && endsAt > Date.now()) return "running";
+    if (uiState === "running" && endsAt && endsAt > Date.now()) {
+      return "running";
+    }
     if (uiState === "done") return "done";
     return "idle";
   });
@@ -59,12 +65,15 @@ const MissionTimerWidget = ({
   });
 
   const completeCalledRef = useRef(completed);
+  const scheduledEndsAtRef = useRef<number | null>(null);
+  const hadRunningStateRef = useRef(false);
 
   useEffect(() => {
     if (completed) {
       setState("done");
       setSecondsLeft(0);
       completeCalledRef.current = true;
+      hadRunningStateRef.current = false;
       return;
     }
 
@@ -87,66 +96,137 @@ const MissionTimerWidget = ({
       setState("done");
       setSecondsLeft(0);
       completeCalledRef.current = true;
+      hadRunningStateRef.current = false;
       return;
     }
 
     setState("idle");
     setSecondsLeft(minutes * 60);
     completeCalledRef.current = false;
+    hadRunningStateRef.current = false;
   }, [minutes, completed, startedAt, endsAt, uiState]);
 
-  const scheduleTimerDoneNotification = useCallback(async (targetEndsAt: number) => {
-    if (!isRnWebViewAvailable()) return;
-
-    const rawSeconds = Math.ceil((targetEndsAt - Date.now()) / 1000);
-    if (rawSeconds <= 0) return;
-
-    const seconds = Math.max(1, rawSeconds);
-
-    try {
-      const result = await rnRequest("MISSION_TIMER_NOTIFICATION_SCHEDULE_REQUEST", {
-        notificationKey,
-        seconds,
-        title: `${label} 타이머 완료`,
-        body: `${label} 타이머가 끝났어요. 앱으로 돌아와 완료 버튼을 눌러보세요.`,
-        data: {
-          notificationKey,
-          type: "mission_timer_done",
-          endsAt: targetEndsAt,
-        },
-      });
-
-      if (!result?.scheduled) {
-        console.warn("타이머 완료 알림 예약 실패:", result?.reason || "unknown");
-      } else {
-        console.log("타이머 완료 알림 예약 성공:", {
-          notificationKey,
-          identifier: result.identifier,
-          seconds,
-          endsAt: targetEndsAt,
-        });
-      }
-    } catch (error) {
-      console.warn("타이머 완료 알림 예약 실패:", error);
+  useEffect(() => {
+    if (state === "running") {
+      hadRunningStateRef.current = true;
     }
-  }, [isRnWebViewAvailable, label, notificationKey, rnRequest]);
+
+    if (state === "idle") {
+      hadRunningStateRef.current = false;
+    }
+  }, [state]);
+
+  const scheduleTimerDoneNotification = useCallback(
+    async (targetEndsAt: number) => {
+      if (!isRnWebViewAvailable()) return;
+
+      const rawSeconds = Math.ceil((targetEndsAt - Date.now()) / 1000);
+      if (rawSeconds <= 0) return;
+
+      const seconds = Math.max(1, rawSeconds);
+
+      try {
+        const result = await rnRequest(
+          "MISSION_TIMER_NOTIFICATION_SCHEDULE_REQUEST",
+          {
+            userId: currentUser?.id,
+            username: currentUser?.username,
+            notificationKey,
+            seconds,
+            targetTimeMs: targetEndsAt,
+            title: `${label} 타이머 완료`,
+            body: `${label} 타이머가 끝났어요. 앱으로 돌아와 완료 버튼을 눌러보세요.`,
+            data: {
+              notificationKey,
+              type: "mission_timer_done",
+              endsAt: targetEndsAt,
+            },
+          },
+        );
+
+        if (!result?.scheduled) {
+          console.warn(
+            "타이머 완료 알림 예약 실패:",
+            result?.reason || "unknown",
+          );
+        } else {
+          console.log("타이머 완료 알림 예약 성공:", {
+            notificationKey,
+            identifier: result.identifier,
+            seconds,
+            targetTimeMs: targetEndsAt,
+            endsAt: targetEndsAt,
+          });
+        }
+      } catch (error) {
+        console.warn("타이머 완료 알림 예약 실패:", error);
+      }
+    },
+    [
+      currentUser?.id,
+      currentUser?.username,
+      isRnWebViewAvailable,
+      label,
+      notificationKey,
+      rnRequest,
+    ],
+  );
 
   const cancelTimerDoneNotification = useCallback(async () => {
     if (!isRnWebViewAvailable()) return;
 
     try {
       await rnRequest("MISSION_TIMER_NOTIFICATION_CANCEL_REQUEST", {
+        userId: currentUser?.id,
+        username: currentUser?.username,
         notificationKey,
       });
     } catch (error) {
       console.warn("타이머 완료 알림 취소 실패:", error);
     }
-  }, [isRnWebViewAvailable, notificationKey, rnRequest]);
+  }, [
+    currentUser?.id,
+    currentUser?.username,
+    isRnWebViewAvailable,
+    notificationKey,
+    rnRequest,
+  ]);
+
+  const showTimerDoneNotificationNow = useCallback(async () => {
+    if (!isRnWebViewAvailable()) return;
+
+    try {
+      await rnRequest("MISSION_TIMER_NOTIFICATION_NOW_REQUEST", {
+        userId: currentUser?.id,
+        username: currentUser?.username,
+        notificationKey,
+        title: `${label} 타이머 완료`,
+        body: `${label} 타이머가 끝났어요. 앱으로 돌아와 완료 버튼을 눌러보세요.`,
+        data: {
+          notificationKey,
+          type: "mission_timer_done_now",
+          originalType: "mission_timer_done",
+          endsAt,
+          immediate: true,
+        },
+      });
+    } catch (error) {
+      console.warn("타이머 즉시 알림 실행 실패:", error);
+    }
+  }, [
+    currentUser?.id,
+    currentUser?.username,
+    endsAt,
+    isRnWebViewAvailable,
+    label,
+    notificationKey,
+    rnRequest,
+  ]);
 
   useEffect(() => {
     if (state !== "running") return;
 
-    const id = setInterval(() => {
+    const id = window.setInterval(() => {
       if (!endsAt) return;
 
       const remain = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
@@ -157,17 +237,23 @@ const MissionTimerWidget = ({
       }
     }, 1000);
 
-    return () => clearInterval(id);
+    return () => window.clearInterval(id);
   }, [state, endsAt]);
 
   useEffect(() => {
     if (state === "done" && !completeCalledRef.current) {
       completeCalledRef.current = true;
+
+      const shouldShowImmediateNotification = hadRunningStateRef.current;
+      hadRunningStateRef.current = false;
+
+      if (shouldShowImmediateNotification) {
+        void showTimerDoneNotificationNow();
+      }
+
       onComplete();
     }
-  }, [state, onComplete]);
-
-  const scheduledEndsAtRef = useRef<number | null>(null);
+  }, [state, onComplete, showTimerDoneNotificationNow]);
 
   useEffect(() => {
     if (state === "running" && endsAt && endsAt > Date.now()) {
@@ -189,11 +275,12 @@ const MissionTimerWidget = ({
     cancelTimerDoneNotification,
   ]);
 
-
   const fmt = (s: number) => {
     const m = Math.floor(s / 60);
     const sec = s % 60;
-    return `${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`;
+    return `${m.toString().padStart(2, "0")}:${sec
+      .toString()
+      .padStart(2, "0")}`;
   };
 
   const totalSeconds = Math.max(minutes * 60, 1);
@@ -210,12 +297,16 @@ const MissionTimerWidget = ({
           setSecondsLeft(minutes * 60);
           setState("running");
           completeCalledRef.current = false;
+          hadRunningStateRef.current = true;
 
           onStart({
             startedAt: now,
             endsAt: nextEndsAt,
             uiState: "running",
           });
+
+          scheduledEndsAtRef.current = nextEndsAt;
+          void scheduleTimerDoneNotification(nextEndsAt);
         }}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-500/20 border border-violet-400/30 text-violet-300 text-[11px] font-semibold"
       >
@@ -229,7 +320,9 @@ const MissionTimerWidget = ({
     return (
       <div className="flex items-center gap-2 mt-1">
         <Timer className="w-3.5 h-3.5 text-violet-400 animate-pulse" />
-        <span className="text-xs font-mono text-violet-300">{fmt(secondsLeft)}</span>
+        <span className="text-xs font-mono text-violet-300">
+          {fmt(secondsLeft)}
+        </span>
         <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
           <motion.div
             className="h-full bg-gradient-to-r from-violet-500 to-purple-500 rounded-full"

@@ -77,6 +77,8 @@ const ProfilePage = () => {
         gender: inBodyData?.gender || "male",
         goal: inBodyData?.goal || "건강 유지",
         force_history_days: 30,
+        userId: user?.id,
+        username: user?.username,
       });
 
       const latest = await rnRequest("HEALTHCARE_LATEST_REQUEST", { token });

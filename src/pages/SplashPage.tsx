@@ -60,6 +60,8 @@ const SplashPage = () => {
         token,
         gender: latest?.inbody?.gender || "male",
         goal: latest?.inbody?.goal || "건강 유지",
+        userId: user?.id,
+        username: user?.username,
       });
 
       localStorage.setItem(AUTO_HEALTH_SYNC_DATE_KEY, todayKey);

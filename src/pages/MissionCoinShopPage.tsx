@@ -8,7 +8,7 @@ import { ArrowLeft, Ticket, Check, Sparkles } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { gameApi } from '@/services/api';
+import { paymentsApi } from '@/services/api';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -32,11 +32,11 @@ interface CoinPackage {
 const PACKAGES: CoinPackage[] = [
   { id: 'pack-1', amount: 1, price: 500, perUnit: 500 },
   { id: 'pack-5', amount: 5, price: 2000, perUnit: 400 },
-  { id: 'pack-10', amount: 10, price: 4800, perUnit: 480, popular: true },
-  { id: 'pack-20', amount: 20, price: 9000, perUnit: 450 },
-  { id: 'pack-30', amount: 30, price: 14000, perUnit: 467 },
-  { id: 'pack-50', amount: 50, price: 23000, perUnit: 460, bestValue: true },
-  { id: 'pack-100', amount: 100, price: 46000, perUnit: 460 },
+  { id: 'pack-10', amount: 10, price: 3800, perUnit: 380, popular: true },
+  { id: 'pack-20', amount: 20, price: 7200, perUnit: 360 },
+  { id: 'pack-30', amount: 30, price: 10200, perUnit: 340 },
+  { id: 'pack-50', amount: 50, price: 16000, perUnit: 320, bestValue: true },
+  { id: 'pack-100', amount: 100, price: 30000, perUnit: 300 },
 ];
 
 const formatPrice = (price: number) => {
@@ -71,28 +71,46 @@ const MissionCoinShopPage = () => {
       setPurchasing(true);
       setShowConfirm(false);
 
-      // 목업 결제 느낌은 유지하되, 실제 저장은 서버로 보냄
-      await new Promise((r) => setTimeout(r, 1200));
-
-      const result = await gameApi.purchaseMissionCoins({
+      const order = await paymentsApi.createMissionCouponOrder({
         package_id: selectedPkg.id,
       });
 
-      if (result?.new_achievements?.length) {
-        enqueueAchievementCelebration(
-          result.new_achievements.map((a) => a.achievement_code)
-        );
+      const clientKey = import.meta.env.VITE_TOSS_CLIENT_KEY;
+
+      if (!clientKey) {
+        throw new Error('VITE_TOSS_CLIENT_KEY가 설정되지 않았습니다.');
       }
 
-      // 서버 프로필 다시 읽어서 헤더/게임 페이지와 상태를 맞춤
-      await refreshGameState();
+      if (!window.TossPayments) {
+        throw new Error('토스페이먼츠 SDK가 로드되지 않았습니다.');
+      }
 
-      toast.success(result.message || `미션 쿠폰 ${selectedPkg.amount}개를 구매했습니다!`);
-      setSelectedPkg(null);
+      const tossPayments = window.TossPayments(clientKey);
+
+      const payment = tossPayments.payment({
+        customerKey: order.customer_key,
+      });
+
+      await payment.requestPayment({
+        method: 'CARD',
+        amount: {
+          currency: 'KRW',
+          value: order.amount,
+        },
+        orderId: order.order_id,
+        orderName: order.order_name,
+        successUrl: `upbodyapp://payment/success`,
+        failUrl: `upbodyapp://payment/fail`,
+        customerName: 'UpBody 사용자',
+        card: {
+          flowMode: 'DEFAULT',
+          appScheme: 'upbodyapp://',
+        },
+        windowTarget: 'self',
+      });
     } catch (error: any) {
-      console.error('미션 쿠폰 구매 실패:', error);
-      toast.error(error?.message || '미션 쿠폰 구매에 실패했습니다.');
-    } finally {
+      console.error('토스 결제 요청 실패:', error);
+      toast.error(error?.message || '결제 요청에 실패했습니다.');
       setPurchasing(false);
     }
   };
@@ -229,7 +247,7 @@ const MissionCoinShopPage = () => {
               className="w-12 h-12 mx-auto mb-4 border-3 border-cyan-400/30 border-t-cyan-400 rounded-full"
             />
             <p className="text-white font-medium">결제 처리 중...</p>
-            <p className="text-white/50 text-xs mt-1">(목업 - 실제 결제 없음)</p>
+            <p className="text-white/50 text-xs mt-1">토스 결제창으로 이동 중...</p>
           </div>
         </motion.div>
       )}
@@ -249,7 +267,7 @@ const MissionCoinShopPage = () => {
                   미션 쿠폰 <span className="text-cyan-300 font-bold">{selectedPkg.amount}개</span>를{' '}
                   <span className="text-white font-bold">₩{formatPrice(selectedPkg.price)}</span>에 구매하시겠습니까?
                   <br />
-                  <span className="text-white/40 text-xs">(목업 결제 - 실제 결제 없음)</span>
+                  <span className="text-white/40 text-xs">결제 페이지로 이동됩니다.</span>
                 </>
               )}
             </AlertDialogDescription>

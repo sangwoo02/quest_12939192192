@@ -401,6 +401,58 @@ export const gameApi = {
   },
 };
 
+export interface CreateMissionCouponOrderRequest {
+  package_id: string;
+}
+
+export interface CreateMissionCouponOrderResponse {
+  ok: boolean;
+  order_id: string;
+  order_name: string;
+  amount: number;
+  coupon_amount: number;
+  package_id: string;
+  customer_key: string;
+}
+
+export interface TossConfirmRequest {
+  paymentKey: string;
+  orderId: string;
+  amount: number;
+}
+
+export interface TossConfirmResponse {
+  ok: boolean;
+  message: string;
+  order_id?: string;
+  package_id?: string;
+  purchased_amount?: number;
+  mission_coins?: number;
+  profile: GameProfileResponse['profile'];
+  new_achievements?: AchievementRecord[];
+}
+
+export const paymentsApi = {
+  createMissionCouponOrder: async (
+    data: CreateMissionCouponOrderRequest
+  ): Promise<CreateMissionCouponOrderResponse> => {
+    return requestJson('/payments/mission-coupons/orders', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  confirmTossPayment: async (
+    data: TossConfirmRequest
+  ): Promise<TossConfirmResponse> => {
+    return requestJson('/payments/toss/confirm', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+};
+
+
 export const weekWalkApi = {
   getOverview: async (): Promise<WeekWalkOverviewResponse> => {
     return requestJson('/week-walk/overview', {

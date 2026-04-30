@@ -30,9 +30,16 @@ import {
   PenLine,
   Flame,
   Sparkles,
+  HelpCircle,
 } from "lucide-react";
 import { useAppStore } from "@/stores/appStore";
 import { useNavigate } from "react-router-dom";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -197,6 +204,7 @@ const MissionsView = () => {
   const navigate = useNavigate();
 
   const {
+    user,
     missions,
     missionCoins,
     dailyMissionRegenCount,
@@ -218,12 +226,15 @@ const MissionsView = () => {
 
   const refreshingSlot = missionUiRequest.refreshingSlot;
   const submittingSlot = missionUiRequest.submittingSlot;
+  const isUiBusy = !!refreshingSlot || !!submittingSlot;
 
   const [giveUpTargetSlot, setGiveUpTargetSlot] = useState<MissionSlotCode | null>(null);
   const [completeTargetSlot, setCompleteTargetSlot] = useState<MissionSlotCode | null>(null);
 
   const [showDailyLimitDialog, setShowDailyLimitDialog] = useState(false);
+  const [showReasonDialog, setShowReasonDialog] = useState<CurrentMission | null>(null);
   const [showUseCoinDialog, setShowUseCoinDialog] = useState(false);
+  const [pendingRefreshSlot, setPendingRefreshSlot] = useState<MissionSlotCode | null>(null);
   const [showNoCoinDialog, setShowNoCoinDialog] = useState(false);
 
   const [pendingCoinAction, setPendingCoinAction] = useState<{
@@ -422,12 +433,15 @@ const MissionsView = () => {
 
     const isTimerMission =
       mission.mission_type === "B1_TIMER_STRETCH" ||
-      mission.mission_type === "B2_SLEEP_PREP";
+      mission.mission_type === "B2_SLEEP_PREP" ||
+      mission.mission_type === "B3_ROUTINE_CHECK";
 
     if (!isTimerMission) return;
 
     try {
       await rnRequest("MISSION_TIMER_NOTIFICATION_CANCEL_REQUEST", {
+        userId: user?.id,
+        username: user?.username,
         notificationKey: `mission-timer-${getMissionKey(mission)}`,
       });
     } catch (error) {
@@ -516,7 +530,7 @@ const MissionsView = () => {
       return;
     }
 
-    await doRefreshSlot(mission.slot_code as MissionSlotCode, false);
+    setPendingRefreshSlot(mission.slot_code as MissionSlotCode);
   };
 
   const handleGiveUpConfirm = async () => {
@@ -575,10 +589,13 @@ const MissionsView = () => {
       if (
         isRnWebViewAvailable() &&
         (mission.mission_type === "B1_TIMER_STRETCH" ||
-          mission.mission_type === "B2_SLEEP_PREP")
+          mission.mission_type === "B2_SLEEP_PREP" ||
+          mission.mission_type === "B3_ROUTINE_CHECK")
       ) {
         try {
           await rnRequest("MISSION_TIMER_NOTIFICATION_CANCEL_REQUEST", {
+            userId: user?.id,
+            username: user?.username,
             notificationKey: `mission-timer-${getMissionKey(mission)}`,
           });
         } catch (error) {
@@ -887,6 +904,7 @@ const MissionsView = () => {
               uiState={
                 (interaction?.uiState as "idle" | "waiting" | "ready" | "done") ?? "idle"
               }
+              notificationKey={`mission-timer-${getMissionKey(mission)}`}
               onStateChange={(payload) =>
                 updateMissionInteractionState(mission, {
                   startedAt: payload.startedAt,
@@ -976,7 +994,7 @@ const MissionsView = () => {
               stroke="url(#targetGradientHeader)"
             />
 
-            <h2 className="text-lg font-bold text-white">오늘의 미션</h2>
+            <h2 className="text-lg font-bold text-white">오늘의 AI 미션</h2>
           </div>
 
           <span className="text-xs text-white/50 bg-white/10 px-2.5 py-1 rounded-full border border-white/10">
@@ -1018,8 +1036,29 @@ const MissionsView = () => {
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: index * 0.08 }}
-                className="relative rounded-2xl p-5 border backdrop-blur-sm bg-amber-500/5 border-amber-400/20"
+                className="relative overflow-hidden rounded-2xl p-5 border backdrop-blur-sm bg-amber-500/5 border-amber-400/20"
               >
+                <AnimatePresence>
+                  {isRefreshing && (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="absolute inset-0 z-10 rounded-2xl bg-black/50 backdrop-blur-sm flex items-center justify-center"
+                    >
+                      <div className="flex items-center gap-2 text-white">
+                        <motion.div
+                          animate={{ rotate: 360 }}
+                          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                        >
+                          <RefreshCw className="w-5 h-5" />
+                        </motion.div>
+                        <span className="text-sm font-medium">미션 생성 중...</span>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
                 <div className="flex flex-col items-center text-center gap-3">
                   <div className="w-12 h-12 rounded-xl bg-amber-500/15 border border-amber-400/20 flex items-center justify-center">
                     <AlertTriangle className="w-6 h-6 text-amber-300" />
@@ -1037,12 +1076,26 @@ const MissionsView = () => {
                   </div>
 
                   <motion.button
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => handleRetryMissingSlot(slotCode)}
-                    className="w-full flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white text-xs font-semibold border border-white/20 shadow-[0_0_15px_rgba(245,158,11,0.3)]"
+                    whileTap={!isUiBusy ? { scale: 0.95 } : undefined}
+                    disabled={isUiBusy}
+                    onClick={() => !isUiBusy && handleRetryMissingSlot(slotCode)}
+                    className={`w-full flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold border ${
+                      isUiBusy
+                        ? "bg-white/5 text-white/25 border-white/10 cursor-not-allowed"
+                        : "bg-gradient-to-r from-amber-500 to-orange-500 text-white border border-white/20 shadow-[0_0_15px_rgba(245,158,11,0.3)]"
+                    }`}
                   >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    다시 생성하기
+                    {isRefreshing ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        다시 생성 중...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        다시 생성하기
+                      </>
+                    )}
                   </motion.button>
                 </div>
               </motion.div>
@@ -1057,8 +1110,33 @@ const MissionsView = () => {
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: index * 0.08 }}
-                className="relative rounded-2xl p-5 border backdrop-blur-sm bg-cyan-500/5 border-cyan-400/20"
+                className="relative overflow-hidden rounded-2xl p-5 border backdrop-blur-sm bg-cyan-500/5 border-cyan-400/20"
               >
+                <AnimatePresence>
+                  {isRefreshing && (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="absolute inset-0 z-10 rounded-2xl bg-black/50 backdrop-blur-sm flex items-center justify-center"
+                    >
+                      <div className="flex items-center gap-2 text-white">
+                        <motion.div
+                          animate={{ rotate: 360 }}
+                          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                        >
+                          <RefreshCw className="w-5 h-5" />
+                        </motion.div>
+                        <span className="text-sm font-medium">
+                          {missionUiRequest.actionType === "retry"
+                            ? "미션 생성 중..."
+                            : "미션 재생성 중..."}
+                        </span>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
                 <div className="flex flex-col items-center text-center gap-3">
                   <div className="w-12 h-12 rounded-xl bg-cyan-500/15 border border-cyan-400/20 flex items-center justify-center">
                     <typeConfig.icon className={`w-6 h-6 ${typeConfig.color}`} />
@@ -1075,31 +1153,49 @@ const MissionsView = () => {
 
                   <div className="flex flex-col gap-2 w-full">
                     <motion.button
-                      whileTap={!refreshingSlot && !submittingSlot ? { scale: 0.95 } : undefined}
-                      disabled={!!refreshingSlot || !!submittingSlot}
-                      onClick={() => !refreshingSlot && !submittingSlot && handleInlineUseCoin(slotCode)}
+                      whileTap={!isUiBusy ? { scale: 0.95 } : undefined}
+                      disabled={isUiBusy}
+                      onClick={() => !isUiBusy && handleInlineUseCoin(slotCode)}
                       className={`flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold border ${
-                        refreshingSlot || submittingSlot
+                        isUiBusy
                           ? "bg-white/5 text-white/25 border-white/10 cursor-not-allowed"
                           : "bg-gradient-to-r from-cyan-600 to-blue-600 text-white border-white/20 shadow-[0_0_15px_rgba(6,182,212,0.3)]"
                       }`}
                     >
-                      <Ticket className="w-3.5 h-3.5" />
-                      미션 쿠폰 사용
+                      {isRefreshing && missionUiRequest.actionType === "retry" ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          미션 생성 중...
+                        </>
+                      ) : (
+                        <>
+                          <Ticket className="w-3.5 h-3.5" />
+                          미션 쿠폰 사용
+                        </>
+                      )}
                     </motion.button>
 
                     <motion.button
-                      whileTap={dailyRemaining > 0 ? { scale: 0.95 } : undefined}
-                      disabled={dailyRemaining <= 0}
-                      onClick={() => dailyRemaining > 0 && doRefreshSlot(slotCode)}
+                      whileTap={!isUiBusy && dailyRemaining > 0 ? { scale: 0.95 } : undefined}
+                      disabled={dailyRemaining <= 0 || isUiBusy}
+                      onClick={() => !isUiBusy && dailyRemaining > 0 && setPendingRefreshSlot(slotCode)}
                       className={`flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold border transition-all ${
-                        dailyRemaining > 0
+                        dailyRemaining > 0 && !isUiBusy
                           ? "bg-gradient-to-r from-emerald-600 to-green-600 text-white border-white/20 shadow-[0_0_15px_rgba(16,185,129,0.3)]"
                           : "bg-white/5 text-white/25 border-white/10 cursor-not-allowed"
                       }`}
                     >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      무료 미션 재생성 ({dailyRemaining}/3)
+                      {isRefreshing && missionUiRequest.actionType === "refresh" ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          재생성 중...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          무료 미션 재생성 ({dailyRemaining}/3)
+                        </>
+                      )}
                     </motion.button>
                   </div>
                 </div>
@@ -1158,26 +1254,28 @@ const MissionsView = () => {
                 </div>
 
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
+                  <div className="flex flex-col gap-1.5 min-w-0">
                     <h3
-                      className={`font-semibold text-sm ${
+                      className={`font-semibold text-sm leading-snug break-words ${
                         mission.status === "completed" ? "text-emerald-300 line-through" : "text-white"
                       }`}
                     >
                       {mission.title}
                     </h3>
 
-                    <span
-                      className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${typeConfig.bgColor} border ${typeConfig.borderColor} ${typeConfig.color}`}
-                    >
-                      {typeConfig.label}
-                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span
+                        className={`w-fit text-[9px] px-1.5 py-0.5 rounded-full font-bold ${typeConfig.bgColor} border ${typeConfig.borderColor} ${typeConfig.color}`}
+                      >
+                        {typeConfig.label}
+                      </span>
 
-                    <span
-                      className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${statusConfig.bgColor} border ${statusConfig.borderColor} ${statusConfig.color}`}
-                    >
-                      {statusConfig.label}
-                    </span>
+                      <span
+                        className={`w-fit text-[9px] px-1.5 py-0.5 rounded-full font-medium ${statusConfig.bgColor} border ${statusConfig.borderColor} ${statusConfig.color}`}
+                      >
+                        {statusConfig.label}
+                      </span>
+                    </div>
                   </div>
 
                   <p className="text-xs text-white/55 mt-1 leading-relaxed">{mission.description}</p>
@@ -1190,6 +1288,22 @@ const MissionsView = () => {
                     <div className="text-[10px] text-yellow-300 bg-yellow-500/10 border border-yellow-500/20 px-2 py-1 rounded-full">
                       코인 +{mission.reward_coins}
                     </div>
+                    <div className="flex-1" />
+                    <motion.button
+                      whileTap={!isDisabledByActive && !isUiBusy ? { scale: 0.95 } : undefined}
+                      disabled={isDisabledByActive || isUiBusy}
+                      onClick={() => {
+                        if (isDisabledByActive || isUiBusy) return;
+                        setShowReasonDialog(mission);
+                      }}
+                      className={`text-[10px] font-semibold border px-2 py-1 rounded-full transition-all ${
+                        isDisabledByActive || isUiBusy
+                          ? "bg-white/5 text-white/25 border-white/10 cursor-not-allowed"
+                          : "text-white bg-gradient-to-r from-emerald-600 to-green-600 border-white/20 hover:from-emerald-500 hover:to-green-500 shadow-[0_0_10px_rgba(16,185,129,0.2)]"
+                      }`}
+                    >
+                      AI 추천 이유
+                    </motion.button>
                   </div>
 
                   {/* 인터랙션 UI */}
@@ -1322,6 +1436,35 @@ const MissionsView = () => {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* 재생성 확인 */}
+      <AlertDialog open={!!pendingRefreshSlot} onOpenChange={(open) => !open && setPendingRefreshSlot(null)}>
+        <AlertDialogContent className="bg-slate-900 border-white/10">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-white">미션을 재생성할까요?</AlertDialogTitle>
+            <AlertDialogDescription className="text-white/60">
+              현재 미션이 삭제되고 새로운 미션이 생성됩니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="bg-white/10 text-white border-white/10 hover:bg-white/20">
+              아니요
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              onClick={() => {
+                if (pendingRefreshSlot) {
+                  doRefreshSlot(pendingRefreshSlot);
+                }
+                setPendingRefreshSlot(null);
+              }}
+            >
+              예
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+
       {/* 하루 무료 재생성 소진 */}
       <AlertDialog open={showDailyLimitDialog} onOpenChange={setShowDailyLimitDialog}>
         <AlertDialogContent className="bg-slate-900 border-white/10">
@@ -1351,7 +1494,7 @@ const MissionsView = () => {
           <AlertDialogHeader>
             <AlertDialogTitle className="text-white">미션 쿠폰을 사용할까요?</AlertDialogTitle>
             <AlertDialogDescription className="text-white/60">
-              코인 1개를 사용해서 해당 슬롯의 미션을 다시 생성합니다.
+              쿠폰 1개를 사용해서 해당 슬롯의 미션을 다시 생성합니다.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1392,6 +1535,35 @@ const MissionsView = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {/* AI 추천 이유 팝업 */}
+      <Dialog open={!!showReasonDialog} onOpenChange={(open) => !open && setShowReasonDialog(null)}>
+        <DialogContent className="bg-slate-900 border-white/10 max-w-[360px] rounded-2xl [&>button]:text-white [&>button]:opacity-100 [&>button]:ring-0 [&>button]:ring-offset-0 [&>button:focus]:ring-0 [&>button:focus]:ring-offset-0 [&>button]:border-0 [&>button]:bg-transparent [&>button]:shadow-none">
+          <DialogHeader>
+            <DialogTitle className="text-white text-base flex items-center gap-2">
+              <span className="flex items-center justify-center w-6 h-6 rounded-full bg-gradient-to-r from-emerald-600 to-green-600 border border-white/20 shadow-[0_0_10px_rgba(16,185,129,0.2)]">
+                <Sparkles className="w-3.5 h-3.5 text-white" />
+              </span>
+              AI가 이렇게 추천하는 이유
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {showReasonDialog && (
+              <>
+                <div className="text-sm font-semibold text-white">
+                  {showReasonDialog.title}
+                </div>
+                <div className="text-xs text-white/70 leading-relaxed bg-white/5 rounded-xl p-3 border border-white/10">
+                  {showReasonDialog.reason && showReasonDialog.reason !== "MISSING_SLOT"
+                    ? showReasonDialog.reason
+                    : "-"}
+                </div>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+
     </div>
   );
 };

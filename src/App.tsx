@@ -37,6 +37,8 @@ import MissionCoinShopPage from "./pages/MissionCoinShopPage";
 import WeekWalkPage from "./pages/WeekWalkPage";
 import WeekWalkRewardTierPage from "./pages/WeekWalkRewardTierPage";
 import NotFound from "./pages/NotFound";
+import PaymentSuccessPage from "./pages/PaymentSuccessPage";
+import PaymentFailPage from "./pages/PaymentFailPage";
 
 // React Query 클라이언트 인스턴스 생성
 const queryClient = new QueryClient();
@@ -149,6 +151,8 @@ const App = () => (
             } 
           />
 
+          <Route path="/payment/success" element={<PaymentSuccessPage />} />
+          <Route path="/payment/fail" element={<PaymentFailPage />} />
           
           {/* ⚠️ 새 라우트는 반드시 이 위에 추가하세요! */}
           <Route path="*" element={<NotFound />} />

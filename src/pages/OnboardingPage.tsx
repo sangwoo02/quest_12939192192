@@ -76,8 +76,9 @@ const OnboardingPage = () => {
         gender: shGender,
         goal: shGoal,
         force_history_days: 30,
+        userId: user?.id,
+        username: user?.username,
       });
-
       setSyncSuccess(true);
 
       setTimeout(async () => {
@@ -261,7 +262,7 @@ const OnboardingPage = () => {
                       {isLoading ? <RefreshCw className="w-10 h-10 text-white animate-spin" /> : <Heart className="w-10 h-10 text-white" />}
                     </motion.div>
                     <h3 className="text-xl font-bold text-foreground">{isLoading ? "연동중..." : "Samsung Health 연동"}</h3>
-                    <p className="text-muted-foreground mt-2">{isLoading ? "데이터를 가져오고 있습니다. 잠시만 기다려주세요." : "Samsung Health 앱에 로그인되어 있는지 확인해주세요."}</p>
+                    <p className="text-muted-foreground mt-2">{isLoading ? "데이터를 가져오고 있습니다. 잠시만 기다려주세요." : "Samsung Health 앱에 로그인되어 있는지 확인해주세요. 또한 Android 13 버전 이상 혹은 Health Connect 앱이 설치되어있어야 합니다."}</p>
                     {isLoading && <motion.div className="mt-6 flex justify-center gap-2" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>{[0, 1, 2].map(i => <motion.div key={i} className="w-3 h-3 rounded-full bg-primary" animate={{ y: [0, -10, 0], opacity: [0.3, 1, 0.3] }} transition={{ duration: 0.8, repeat: Infinity, delay: i * 0.2 }} />)}</motion.div>}
                   </>
                 ) : !syncComplete ? (
@@ -283,18 +284,32 @@ const OnboardingPage = () => {
                 )}
               </div>
               {!syncSuccess && !isLoading && (
-                <div className="rounded-xl bg-amber-500/10 border border-amber-500/20 p-4 space-y-3">
-                  <div className="flex items-start gap-2.5">
-                    <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                      이전에 직접 입력한 신체 정보(키, 몸무게, 성별 등)가 있는 경우, Samsung Health 연동 시 해당 데이터는 삭제되고 연동된 데이터로 대체됩니다. 기존 입력 내용이 사라질 수 있으니 유의하세요.
-                    </p>
+                <div className="rounded-xl overflow-hidden border border-border">
+                  {/* 빨간색 경고 영역 */}
+                  <div className="bg-red-500/10 border-b border-red-500/20 p-4">
+                    <div className="flex items-start gap-2.5">
+                      <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                      <p className="text-xs text-red-500 leading-relaxed">
+                        Health Connect 네트워크로 인한 오류 실패 시, <p>Samsung Health 앱에서 키와 몸무게를 임의로 수정하시고 다시 연동을 시도해보세요.</p>
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex items-start gap-2.5">
-                    <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                      연동이 완료되면 신체 정보는 Samsung Health 데이터를 기반으로 자동 관리됩니다. 이후에는 직접 입력 기능이 비활성화되며, 수동으로 수정하실 수 없습니다.
-                    </p>
+
+                  {/* 노란색 안내 영역 */}
+                  <div className="bg-amber-500/10 p-4 space-y-3">
+                    <div className="flex items-start gap-2.5">
+                      <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        이전에 직접 입력한 신체 정보(키, 몸무게, 성별 등)가 있는 경우, Health Connect 연동 시 해당 데이터는 삭제되고 연동된 데이터로 대체됩니다. 기존 입력 내용이 사라질 수 있으니 유의하세요.
+                      </p>
+                    </div>
+
+                    <div className="flex items-start gap-2.5">
+                      <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        연동이 완료되면 신체 정보는 Health Connect 데이터를 기반으로 자동 관리됩니다. 이후에는 직접 입력 기능이 비활성화되며, 수동으로 수정하실 수 없습니다.
+                      </p>
+                    </div>
                   </div>
                 </div>
               )}

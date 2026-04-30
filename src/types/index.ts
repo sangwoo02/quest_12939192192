@@ -295,6 +295,50 @@ export interface AchievementRecord {
   acquired_at: string | null;
 }
 
+export interface BehaviorTypeMetrics {
+  generated_count: number;
+  started_count: number;
+  completed_count: number;
+  refreshed_count: number;
+  completion_rate: number;
+  refresh_rate: number;
+}
+
+export interface BehaviorSlotSummary {
+  generated_count: number;
+  started_count: number;
+  completed_count: number;
+  refreshed_count: number;
+  completion_rate: number;
+  refresh_rate: number;
+  preferred_types: string[];
+  discouraged_types: string[];
+  difficulty_bias: 'up' | 'down' | 'neutral' | string;
+  has_enough_data: boolean;
+  types: Record<string, BehaviorTypeMetrics>;
+  notes: string[];
+}
+
+export interface BehaviorAdaptationSummary {
+  history_window_size: number;
+  resolved_count: number;
+  total_resolved_count?: number;
+  confidence?: 'low' | 'medium' | 'high' | string;
+  slots: Record<string, BehaviorSlotSummary>;
+}
+
+export interface BehaviorPublicSummary {
+  preferred_styles: string[];
+  avoided_styles: string[];
+  difficulty_tendency: Record<string, 'up' | 'down' | 'neutral' | string>;
+  confidence: 'low' | 'medium' | 'high' | string;
+  top_preferred_types?: string[];
+  top_avoided_types?: string[];
+  recent_resolved_count?: number;
+  total_resolved_count?: number;
+  updated_at?: string | null;
+}
+
 
 export interface GameProfile {
   user_id: number;
@@ -323,6 +367,7 @@ export interface GameProfile {
   total_missions_completed: number;
   total_coins_earned: number;
   total_purchases: number;
+  adaptation_summary?: BehaviorPublicSummary | null;
   next_level_required_exp: number;
   can_level_up: boolean;
   character_stage: string;
@@ -542,7 +587,8 @@ export interface GenerateInitialMissionsRequest {
 export interface GenerateInitialMissionsResponse {
   ok: boolean;
   message: string;
-  game_profile: GameProfile;
+  game_initialized: boolean;
+  profile_id: number;
   missions: CurrentMission[];
 }
 
@@ -560,7 +606,7 @@ export interface RefreshSlotResponse {
   mission_coins: number;
   previous_mission_id?: number;
   mission?: CurrentMission;
-  reason?: 'MISSION_COIN_REQUIRED';
+  reason?: 'MISSION_COIN_REQUIRED' | 'REFRESH_GENERATION_FAILED';
 }
 
 export interface StartSlotRequest {
